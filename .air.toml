@@ -1,7 +1,7 @@
 root = "."
 
 [build]
-cmd = "go build -o /tmp/traefikofficer ./pkg"
+cmd = "go build -buildvcs=false -o /tmp/traefikofficer ./pkg"
 bin = "/tmp/traefikofficer"
 args_bin = [
     "--log-file=/var/log/traefik/access.log",

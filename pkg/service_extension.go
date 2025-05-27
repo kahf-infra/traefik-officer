@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,7 +19,7 @@ type URLPattern struct {
 
 var (
 	// Original metrics
-	totalRequests = prometheus.NewCounterVec(
+	totalRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "traefik_officer_requests_total",
 			Help: "Total number of HTTP requests",
@@ -26,7 +27,7 @@ var (
 		[]string{"method", "code", "service"},
 	)
 
-	requestDuration = prometheus.NewHistogramVec(
+	requestDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "traefik_officer_request_duration_seconds",
 			Help:    "Duration of HTTP requests in seconds",
@@ -35,7 +36,7 @@ var (
 		[]string{"method", "code", "service"},
 	)
 
-	requestSize = prometheus.NewHistogramVec(
+	requestSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "traefik_officer_request_size_bytes",
 			Help:    "Size of HTTP requests in bytes",
@@ -44,7 +45,7 @@ var (
 		[]string{"method", "code", "service"},
 	)
 
-	responseSize = prometheus.NewHistogramVec(
+	responseSize = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "traefik_officer_response_size_bytes",
 			Help:    "Size of HTTP responses in bytes",
@@ -54,7 +55,7 @@ var (
 	)
 
 	// New endpoint-specific metrics
-	endpointRequests = prometheus.NewCounterVec(
+	endpointRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "traefik_officer_endpoint_requests_total",
 			Help: "Total number of HTTP requests per endpoint",
@@ -62,7 +63,7 @@ var (
 		[]string{"service", "endpoint", "method", "code"},
 	)
 
-	endpointDuration = prometheus.NewHistogramVec(
+	endpointDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "traefik_officer_endpoint_request_duration_seconds",
 			Help:    "Duration of HTTP requests per endpoint in seconds",
@@ -71,7 +72,7 @@ var (
 		[]string{"service", "endpoint", "method", "code"},
 	)
 
-	endpointAvgLatency = prometheus.NewGaugeVec(
+	endpointAvgLatency = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "traefik_officer_endpoint_avg_latency_seconds",
 			Help: "Average latency per endpoint in seconds",
@@ -79,7 +80,7 @@ var (
 		[]string{"service", "endpoint"},
 	)
 
-	endpointMaxLatency = prometheus.NewGaugeVec(
+	endpointMaxLatency = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "traefik_officer_endpoint_max_latency_seconds",
 			Help: "Maximum latency per endpoint in seconds",
@@ -87,7 +88,7 @@ var (
 		[]string{"service", "endpoint"},
 	)
 
-	endpointErrorRate = prometheus.NewGaugeVec(
+	endpointErrorRate = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "traefik_officer_endpoint_error_rate",
 			Help: "Error rate per endpoint (ratio of 4xx/5xx responses)",

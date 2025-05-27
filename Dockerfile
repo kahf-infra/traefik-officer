@@ -1,18 +1,37 @@
+# Use the same Go version for both stages to avoid compatibility issues
 FROM golang:1.22-alpine AS builder
-RUN mkdir /app
+
 WORKDIR /app
-ADD pkg/ ./
-ADD go.mod ./
-ADD go.sum ./
-RUN apk add git; \
-    go install -u "github.com/hpcloud/tail@latest"; \
-    go install -u "github.com/prometheus/client_golang/prometheus@latest"; \
-    go install -u "github.com/mitchellh/go-ps@latest"; \
-    go install -u "github.com/sirupsen/logrus@latest"; \
-    go build -o traefikofficer .
 
-FROM golang:1.13-alpine
+# Copy dependency files first for better layer caching
+COPY go.mod go.sum ./
 
-COPY --from=builder /app/traefikofficer ./
+# Install dependencies and build tools
+RUN apk add --no-cache git make gcc musl-dev
 
-ENTRYPOINT [ "./traefikofficer" ]
+# Download dependencies (go mod download is more efficient than go install for dependencies)
+RUN go mod download
+
+# Copy the rest of the application
+COPY pkg/ ./pkg/
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -o /traefikofficer ./pkg
+
+# Final stage - use scratch or alpine for smallest image
+FROM alpine:3.19
+
+# Install CA certificates for HTTPS requests
+RUN apk add --no-cache ca-certificates
+
+# Copy the binary from builder
+COPY --from=builder /traefikofficer /app/traefikofficer
+
+# Set working directory
+WORKDIR /app
+
+# Run as non-root user
+RUN adduser -D appuser && chown -R appuser /app
+USER appuser
+
+ENTRYPOINT [ "/app/traefikofficer" ]

@@ -64,14 +64,12 @@ services:
   officer:
     build:
       context: .
-      dockerfile: dev.dockerfile
+    image: mithucste30/traefik-officer:latest
     environment:
-      - NODE_ENV=development
       - DEBUG=true
     volumes:
       - traefik-logs:/var/log/traefik:ro
       - ./test/config.json:/config/traefik_officer.json
-      - .:/app
     networks:
       - traefik-test
 

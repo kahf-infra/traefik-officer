@@ -2,9 +2,12 @@
 
 # Enable metrics
 metrics:
+  addInternals: true
   prometheus:
+    entryPoint: metrics
     addEntryPointsLabels: true
     addServicesLabels: true
+    buckets: [0.1,0.3,1.2,5.0]
 
 # Configure entry points
 entryPoints:
@@ -12,6 +15,8 @@ entryPoints:
     address: ":80"
   websecure:
     address: ":443"
+  metrics:
+    address: ":9090"
 
 # Enable API and dashboard
 api:
