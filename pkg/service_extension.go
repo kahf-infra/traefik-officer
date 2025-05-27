@@ -96,9 +96,6 @@ var (
 		[]string{"service", "endpoint"},
 	)
 
-	// URL patterns configuration
-	urlPatterns []URLPattern
-
 	// Track metrics for calculating averages and error rates
 	endpointStats = make(map[string]*EndpointStat)
 )
@@ -111,16 +108,17 @@ type EndpointStat struct {
 }
 
 // extractServiceName extracts service name from router name (keeping original logic)
+
 func extractServiceName(routerName string) string {
-	// Remove @kubernetescrd suffix if present
+	// Remove anything after @ character (including the @ itself)
 	if idx := strings.Index(routerName, "@"); idx != -1 {
 		routerName = routerName[:idx]
 	}
 
-	// Split by dash and try to find meaningful service name
+	// Split by dash and try to find a meaningful service name
 	parts := strings.Split(routerName, "-")
 	if len(parts) >= 3 {
-		// Try to identify service pattern: namespace-service-name-type-protocol-hash
+		// Try to identify a service pattern: namespace-service-name-type-protocol-hash
 		for i := 0; i < len(parts)-2; i++ {
 			if parts[i+1] == "api" || parts[i+1] == "web" || parts[i+1] == "service" {
 				if i > 0 {
@@ -146,7 +144,7 @@ func extractServiceName(routerName string) string {
 }
 
 // normalizeURL applies URL patterns to normalize endpoints
-func normalizeURL(serviceName, path string) string {
+func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
 	// First, try service-specific patterns
 	for _, pattern := range urlPatterns {
 		if pattern.ServiceName == serviceName && pattern.Regex != nil {
@@ -212,10 +210,10 @@ func updateEndpointStats(service, endpoint string, duration float64, isError boo
 	endpointErrorRate.WithLabelValues(service, endpoint).Set(errorRate)
 }
 
-func processLogEntry(entry *traefikJSONLog) {
+func processLogEntry(entry *traefikJSONLog, urlPatterns []URLPattern) {
 	method := entry.RequestMethod
 	code := strconv.Itoa(entry.OriginStatus)
-	service := entry.RouterName
+	service := extractServiceName(entry.RouterName)
 	duration := float64(entry.Duration) / 1000.0 // Convert to seconds
 
 	// Original metrics (keeping existing functionality)
@@ -227,7 +225,7 @@ func processLogEntry(entry *traefikJSONLog) {
 	}
 
 	// New endpoint-specific metrics
-	endpoint := normalizeURL(service, entry.RequestPath)
+	endpoint := normalizeURL(service, entry.RequestPath, urlPatterns)
 	endpointRequests.WithLabelValues(service, endpoint, method, code).Inc()
 	endpointDuration.WithLabelValues(service, endpoint, method, code).Observe(duration)
 

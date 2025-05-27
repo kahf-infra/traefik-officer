@@ -185,11 +185,13 @@ func main() {
 
 				if ignoreMatched {
 					linesIgnored.Inc()
+					logger.Debug("Ignoring line, due to ignore rule: ", line.Text)
 					continue
 				}
 			}
 
 			if d.Duration > *passLogAboveThresholdPtr && isWhitelisted {
+				logger.Info("Request took longer than threshold: ", *passLogAboveThresholdPtr)
 				fmt.Println(line.Text)
 			}
 
@@ -200,7 +202,7 @@ func main() {
 			if *jsonLogsPtr {
 				traefikOverhead.Observe(d.Overhead)
 			}
-			processLogEntry(&d)
+			processLogEntry(&d, config.URLPatterns)
 		}
 	}
 }
@@ -332,7 +334,7 @@ func parseLine(line string) (traefikJSONLog, error) {
 
 		logger.Debugf("ClientHost: %s", log.ClientHost)
 		logger.Debugf("StartUTC: %s", log.StartUTC)
-		logger.Debugf("RouterName: %s", log.RouterName)
+		logger.Debugf("RouterName: %s", extractServiceName(log.RouterName))
 		logger.Debugf("RequestMethod: %s", log.RequestMethod)
 		logger.Debugf("RequestPath: %s", log.RequestPath)
 		logger.Debugf("RequestProtocol: %s", log.RequestProtocol)

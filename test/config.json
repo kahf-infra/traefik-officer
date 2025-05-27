@@ -10,7 +10,8 @@
         "http-to-443@internal"
     ],
     "IgnoredPathsRegex": [
-        "\\/images\\/"
+        "\\/images\\/",
+        "\\/metrics\\/"
     ],
     "MergePathsWithExtensions": [
         "/api",
@@ -18,5 +19,12 @@
     ],
     "WhitelistPaths": [
         "/api/v2/"
+    ],
+    "URLPatterns": [
+        {
+            "service_name": "jsonapi@docker",
+            "pattern": "^/api/v1/products/([a-zA-Z0-9\\-]+)$",
+            "name": "/api/v1/products/{name}"
+        }
     ]
 }
