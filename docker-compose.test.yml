@@ -66,6 +66,7 @@ services:
     build:
       context: .
       dockerfile: dev.dockerfile
+    image: mithucste30/traefik-officer:latest
     environment:
       - NODE_ENV=development
       - DEBUG=true

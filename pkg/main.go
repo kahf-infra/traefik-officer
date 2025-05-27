@@ -23,18 +23,6 @@ import (
 	logger "github.com/sirupsen/logrus"
 )
 
-func init() {
-	prometheus.MustRegister(totalRequests)
-	prometheus.MustRegister(requestDuration)
-	prometheus.MustRegister(requestSize)
-	prometheus.MustRegister(responseSize)
-	prometheus.MustRegister(endpointRequests)
-	prometheus.MustRegister(endpointDuration)
-	prometheus.MustRegister(endpointAvgLatency)
-	prometheus.MustRegister(endpointMaxLatency)
-	prometheus.MustRegister(endpointErrorRate)
-}
-
 // EstBytesPerLine Estimated number of bytes per line - for log rotation
 var EstBytesPerLine int = 150
 
@@ -50,7 +38,7 @@ var (
 	})
 
 	traefikOverhead = promauto.NewSummary(prometheus.SummaryOpts{
-		Name: "traefik_officer_overhead",
+		Name: "traefik_officer_traefik_overhead",
 		Help: "The overhead caused by traefik processing of requests",
 	})
 
@@ -179,7 +167,7 @@ func main() {
 				requestPath = strings.Split(d.RequestPath, "?")[0]
 				requestPath = strings.Split(requestPath, "&")[0]
 
-				// Merge paths where query args are embedded in url (/api/arg1/arg1)
+				// Merge paths where query args are embedded in the url (/api/arg1/arg1)
 				requestPath = mergePaths(requestPath, config.MergePathsWithExtensions)
 			}
 
@@ -430,10 +418,10 @@ func logRotate(accessLogLocation string) {
 }
 
 func createFile(path string) {
-	// check if file exists
+	// check if a file exists
 	var _, err = os.Stat(path)
 
-	// create file if not exists
+	// create a file if not exists
 	if os.IsNotExist(err) {
 		var file, err = os.Create(path)
 		if err != nil {
@@ -444,7 +432,7 @@ func createFile(path string) {
 }
 
 func deleteFile(path string) {
-	// delete file
+	// delete a file
 	var err = os.Remove(path)
 	if err != nil {
 		logger.Warn("Deleting accessLog failed.\n")
