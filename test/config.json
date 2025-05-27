@@ -1,0 +1,22 @@
+{
+    "IgnoredNamespaces": [
+        "/^-$/",
+        "test"
+    ],
+    "IgnoredRouters": [
+        "website",
+        "api@internal",
+        "prometheus@internal",
+        "http-to-443@internal"
+    ],
+    "IgnoredPathsRegex": [
+        "\\/images\\/"
+    ],
+    "MergePathsWithExtensions": [
+        "/api",
+        "/test"
+    ],
+    "WhitelistPaths": [
+        "/api/v2/"
+    ]
+}

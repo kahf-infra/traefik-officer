@@ -1,0 +1,84 @@
+volumes:
+  traefik-logs:
+
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      - "80:80"
+      - "8080:8080"  # Dashboard
+      - "9090:9090"  # Metrics endpoint
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./test/traefik.yml:/etc/traefik/traefik.yml:ro
+      - traefik-logs:/var/log/traefik:rw
+    networks:
+      - traefik-test
+
+  # Mock API service
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.entrypoints=web"
+      - "traefik.http.routers.whoami.rule=Host(`api.example.local`)"
+      - "traefik.http.services.whoami.loadbalancer.server.port=80"
+    networks:
+      - traefik-test
+
+  # JSON Server for more realistic API responses
+  json-server:
+    image: clue/json-server
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jsonapi.entrypoints=web"
+      - "traefik.http.routers.jsonapi.rule=Host(`jsonapi.example.local`)"
+      - "traefik.http.services.jsonapi.loadbalancer.server.port=80"
+    command:
+      - "--watch"
+      - "--read-only=false"
+      - "/data/db.json"
+      - "--routes"
+      - "/data/routes.json"
+      - "--middlewares"
+      - "/data/middleware.js"
+      - "--no-cors" # Disable default CORS to use our middleware
+    volumes:
+      - ./test/middleware.js:/data/middleware.js
+      - ./test/db.json:/data/db.json
+      - ./test/routes.json:/data/routes.json  # For custom routes
+    networks:
+      - traefik-test
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./test/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - traefik-test
+
+  officer:
+    build:
+      context: .
+      dockerfile: dev.dockerfile
+    environment:
+      - NODE_ENV=development
+      - DEBUG=true
+    ports:
+      - "8084:8084"
+      - "9229:9229"
+    volumes:
+      - traefik-logs:/var/log/traefik:ro
+      - ./test/config.json:/config/traefik_officer.json
+      - .:/app
+    networks:
+      - traefik-test
+
+networks:
+  traefik-test:
+    driver: bridge

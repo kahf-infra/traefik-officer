@@ -1,0 +1,22 @@
+{
+  "users": [
+    { "id": 123, "name": "John Doe", "email": "john@example.com" },
+    { "id": 456, "name": "Jane Smith", "email": "jane@example.com" }
+  ],
+  "products": [
+    { "id": "abc-123", "name": "Premium Laptop", "price": 1299.99, "version": "v1" },
+    { "id": "def-456", "name": "Flagship Phone", "price": 899.99, "version": "v2" }
+  ],
+  "orders": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "userId": 123,
+      "products": ["abc-123"],
+      "status": "shipped"
+    }
+  ],
+  "health": {
+    "status": "OK",
+    "timestamp": "2023-11-15T12:00:00Z"
+  }
+}

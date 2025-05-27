@@ -23,6 +23,18 @@ import (
 	logger "github.com/sirupsen/logrus"
 )
 
+func init() {
+	prometheus.MustRegister(totalRequests)
+	prometheus.MustRegister(requestDuration)
+	prometheus.MustRegister(requestSize)
+	prometheus.MustRegister(responseSize)
+	prometheus.MustRegister(endpointRequests)
+	prometheus.MustRegister(endpointDuration)
+	prometheus.MustRegister(endpointAvgLatency)
+	prometheus.MustRegister(endpointMaxLatency)
+	prometheus.MustRegister(endpointErrorRate)
+}
+
 // EstBytesPerLine Estimated number of bytes per line - for log rotation
 var EstBytesPerLine int = 150
 
@@ -53,11 +65,12 @@ var (
 type parser func(line string) (traefikJSONLog, error)
 
 type traefikOfficerConfig struct {
-	IgnoredNamespaces        []string `json:"IgnoredNamespaces"`
-	IgnoredRouters           []string `json:"IgnoredRouters"`
-	IgnoredPathsRegex        []string `json:"IgnoredPathsRegex"`
-	MergePathsWithExtensions []string `json:"MergePathsWithExtensions"`
-	WhitelistPaths           []string `json:"WhitelistPaths"`
+	IgnoredNamespaces        []string     `json:"IgnoredNamespaces"`
+	IgnoredRouters           []string     `json:"IgnoredRouters"`
+	IgnoredPathsRegex        []string     `json:"IgnoredPathsRegex"`
+	MergePathsWithExtensions []string     `json:"MergePathsWithExtensions"`
+	WhitelistPaths           []string     `json:"WhitelistPaths"`
+	URLPatterns              []URLPattern `json:"URLPatterns"`
 }
 
 type traefikJSONLog struct {
@@ -170,7 +183,7 @@ func main() {
 				requestPath = mergePaths(requestPath, config.MergePathsWithExtensions)
 			}
 
-			// Check whether path is in the whitelist:
+			// Check whether a path is in the allowlist:
 			isWhitelisted := whiteListChecker(requestPath, config.WhitelistPaths)
 
 			if !isWhitelisted && *strictWhiteListPtr {
@@ -178,9 +191,9 @@ func main() {
 				continue
 			}
 			if !isWhitelisted {
-				// Check whether routername matches ignored namespace, router or path regex.
-				ignoreMatched := (checkMatches(d.RouterName, config.IgnoredNamespaces) ||
-					checkMatches(d.RouterName, config.IgnoredRouters) || checkMatches(requestPath, config.IgnoredPathsRegex))
+				// Check whether router name matches ignored namespace, router or path regex.
+				ignoreMatched := checkMatches(d.RouterName, config.IgnoredNamespaces) ||
+					checkMatches(d.RouterName, config.IgnoredRouters) || checkMatches(requestPath, config.IgnoredPathsRegex)
 
 				if ignoreMatched {
 					linesIgnored.Inc()
@@ -199,6 +212,7 @@ func main() {
 			if *jsonLogsPtr {
 				traefikOverhead.Observe(d.Overhead)
 			}
+			processLogEntry(&d)
 		}
 	}
 }
@@ -251,7 +265,7 @@ func checkMatches(str string, matchExpressions []string) bool {
 }
 
 func parseJSON(line string) (traefikJSONLog, error) {
-	var log traefikJSONLog
+	var jsonLog traefikJSONLog
 	var jsonValid bool
 	jsonValid = json.Valid([]byte(line))
 
@@ -260,28 +274,28 @@ func parseJSON(line string) (traefikJSONLog, error) {
 		logger.Errorf("%s '%s'", err, line)
 	}
 
-	err := json.Unmarshal([]byte(line), &log)
+	err := json.Unmarshal([]byte(line), &jsonLog)
 	if err != nil {
 		logger.Error(err)
 	}
 
-	log.Duration = log.Duration / 1000000 // JSON Logs format latency in nanoseconds, convert to ms
-	log.Overhead = log.Overhead / 1000000 // sane for overhead metrics
+	jsonLog.Duration = jsonLog.Duration / 1000000 // JSON Logs format latency in nanoseconds, convert to ms
+	jsonLog.Overhead = jsonLog.Overhead / 1000000 // sane for overhead metrics
 
-	logger.Debugf("JSON Parsed: %s", log)
-	logger.Debugf("ClientHost: %s", log.ClientHost)
-	logger.Debugf("StartUTC: %s", log.StartUTC)
-	logger.Debugf("RouterName: %s", log.RouterName)
-	logger.Debugf("RequestMethod: %s", log.RequestMethod)
-	logger.Debugf("RequestPath: %s", log.RequestPath)
-	logger.Debugf("RequestProtocol: %s", log.RequestProtocol)
-	logger.Debugf("OriginStatus: %d", log.OriginStatus)
-	logger.Debugf("OriginContentSize: %dbytes", log.OriginContentSize)
-	logger.Debugf("RequestCount: %d", log.RequestCount)
-	logger.Debugf("Duration: %fms", log.Duration)
-	logger.Debugf("Overhead: %fms", log.Overhead)
+	logger.Debugf("JSON Parsed: %s", jsonLog)
+	logger.Debugf("ClientHost: %s", jsonLog.ClientHost)
+	logger.Debugf("StartUTC: %s", jsonLog.StartUTC)
+	logger.Debugf("RouterName: %s", extractServiceName(jsonLog.RouterName))
+	logger.Debugf("RequestMethod: %s", jsonLog.RequestMethod)
+	logger.Debugf("RequestPath: %s", jsonLog.RequestPath)
+	logger.Debugf("RequestProtocol: %s", jsonLog.RequestProtocol)
+	logger.Debugf("OriginStatus: %d", jsonLog.OriginStatus)
+	logger.Debugf("OriginContentSize: %dbytes", jsonLog.OriginContentSize)
+	logger.Debugf("RequestCount: %d", jsonLog.RequestCount)
+	logger.Debugf("Duration: %fms", jsonLog.Duration)
+	logger.Debugf("Overhead: %fms", jsonLog.Overhead)
 
-	return log, err
+	return jsonLog, err
 }
 
 func parseLine(line string) (traefikJSONLog, error) {
@@ -365,6 +379,15 @@ func loadConfig(configLocation string) (traefikOfficerConfig, error) {
 	err = json.Unmarshal(byteValue, &config)
 	if err != nil {
 		logger.Error(err)
+	}
+
+	for i := range config.URLPatterns {
+		regex, err := regexp.Compile(config.URLPatterns[i].Pattern)
+		if err != nil {
+			log.Printf("Invalid regex pattern for %s: %v", config.URLPatterns[i].Name, err)
+			continue
+		}
+		config.URLPatterns[i].Regex = regex
 	}
 	return config, nil
 }

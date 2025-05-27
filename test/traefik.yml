@@ -1,0 +1,33 @@
+# Enable experimental features for local plugins
+
+# Enable metrics
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+# Configure entry points
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+# Enable API and dashboard
+api:
+  dashboard: true
+  insecure: true
+
+# Provider configuration
+providers:
+  docker:
+    exposedByDefault: false  # Only services with traefik.enable=true will be exposed
+    network: traefik-test
+    watch: true
+accessLog:
+  addInternals: true
+  filePath: "/var/log/traefik/access.log"
+  format: common  # Options: common, json
+
+log:
+  level: DEBUG

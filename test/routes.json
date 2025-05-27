@@ -1,0 +1,6 @@
+{
+  "/api/users/:id": "/users?userId=:id",
+  "/api/users/:id/orders": "/orders?userId=:id",
+  "/api/v1/products": "/products?version=v1",
+  "/api/v2/products": "/products?version=v2"
+}
