@@ -3,3 +3,5 @@ traefikofficer
 accessLog.txt
 .logs
 .debug
+results.csv
+tmp/

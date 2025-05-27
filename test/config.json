@@ -22,7 +22,7 @@
     ],
     "URLPatterns": [
         {
-            "service_name": "jsonapi@docker",
+            "service_name": "jsonapi",
             "pattern": "^/api/v1/products/([a-zA-Z0-9\\-]+)$",
             "name": "/api/v1/products/{name}"
         }
