@@ -241,10 +241,13 @@ func (kls *KubernetesLogSource) streamPodLogsWithRetry(ctx context.Context, podN
 
 // streamPodLogs handles the actual log streaming for a single pod
 func (kls *KubernetesLogSource) streamPodLogs(ctx context.Context, podName string) error {
+	// Get current time to only stream logs from this point forward
+	sinceTime := metav1.NewTime(time.Now())
+	
 	req := kls.clientSet.CoreV1().Pods(kls.namespace).GetLogs(podName, &v1.PodLogOptions{
 		Container: kls.containerName,
 		Follow:    true,
-		TailLines: int64Ptr(0), // Start from now
+		SinceTime: &sinceTime, // Only get logs from this time forward
 	})
 
 	podLogs, err := req.Stream(ctx)
