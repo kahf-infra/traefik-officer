@@ -12,8 +12,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	logger "github.com/sirupsen/logrus"
 	"io/ioutil"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"log"
 	"net/http"
 	"os"
@@ -92,11 +90,10 @@ func main() {
 		"Passthrough traefik accessLog line to stdout if request takes longer that X seconds. Only whitelisted request paths.")
 
 	// New Kubernetes flags
-	useK8sPtr := flag.Bool("use-k8s", false, "Read logs from Kubernetes pod instead of file")
-	podNamePtr := flag.String("pod-name", "", "Kubernetes pod name (required if use-k8s is true)")
+	useK8sPtr := flag.Bool("use-k8s", false, "Read logs from Kubernetes pods instead of file")
+	podLabelSelectorPtr := flag.String("pod-label-selector", "app.kubernetes.io/name=traefik", "Kubernetes pod label selector (e.g., 'app=traefik')")
 	namespacePtr := flag.String("namespace", "ingress-controller", "Kubernetes namespace")
-	containerNamePtr := flag.String("container-name", "traefik", "Container name in the pod")
-	dynamicPodPtr := flag.Bool("auto-discover-pod", false, "Automatically discover Traefik pod")
+	containerNamePtr := flag.String("container-name", "traefik", "Container name in the pods")
 
 	flag.Parse()
 
@@ -104,32 +101,10 @@ func main() {
 		logger.SetLevel(logger.DebugLevel)
 	}
 
-	if *dynamicPodPtr {
-		config, err := rest.InClusterConfig()
-		if err != nil {
-			logger.Info("Not in cluster, trying kubeconfig...")
-		}
-
-		clientSet, err := kubernetes.NewForConfig(config)
-		if err != nil {
-			logger.Error("kubernetes client error:", err)
-			os.Exit(1)
-		}
-
-		*podNamePtr, err = discoverTraefikPod(clientSet, *namespacePtr)
-		if err != nil {
-			logger.Error("Failed to discover Traefik pod:", err)
-			os.Exit(1)
-		}
-	}
-
-	// Validate Kubernetes configuration
+	// Log configuration
 	if *useK8sPtr {
-		if *podNamePtr == "" {
-			logger.Error("pod-name is required when use-k8s is true")
-			os.Exit(1)
-		}
-		logger.Info("Kubernetes Mode - Pod:", *podNamePtr, "Namespace:", *namespacePtr, "Container:", *containerNamePtr)
+		logger.Infof("Kubernetes Mode - Namespace: %s, Container: %s, Label Selector: %s",
+			*namespacePtr, *containerNamePtr, *podLabelSelectorPtr)
 	} else {
 		logger.Info("File Mode - Access Logs At:", *fileNamePtr)
 	}
@@ -152,7 +127,7 @@ func main() {
 		config.WhitelistPaths)
 
 	// Create log source
-	logSource, err := createLogSource(*useK8sPtr, *fileNamePtr, *podNamePtr, *namespacePtr, *containerNamePtr)
+	logSource, err := createLogSource(*useK8sPtr, *fileNamePtr, *namespacePtr, *containerNamePtr, *podLabelSelectorPtr)
 	if err != nil {
 		logger.Error("Failed to create log source:", err)
 		os.Exit(1)

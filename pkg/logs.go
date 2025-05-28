@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	logger "github.com/sirupsen/logrus"
 	"time"
 )
@@ -19,16 +20,16 @@ type LogLine struct {
 }
 
 // createLogSource creates the appropriate log source based on configuration
-func createLogSource(useK8s bool, filename, podName, namespace, containerName string) (LogSource, error) {
+func createLogSource(useK8s bool, filename, namespace, containerName, labelSelector string) (LogSource, error) {
 	if useK8s {
-		logger.Info("Creating Kubernetes log source")
-		kls, err := NewKubernetesLogSource(podName, namespace, containerName)
+		logger.Info("Creating Kubernetes log source with label selector:", labelSelector)
+		kls, err := NewKubernetesLogSource(namespace, containerName, labelSelector)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create Kubernetes log source: %v", err)
 		}
 		err = kls.startStreaming()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to start Kubernetes log streaming: %v", err)
 		}
 		return kls, nil
 	} else {
