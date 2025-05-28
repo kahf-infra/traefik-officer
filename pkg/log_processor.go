@@ -83,6 +83,8 @@ func processLogs(logSource LogSource, parse parser, whiteListChecker func(string
 		// Not ignored, publish metric
 		latencyMetrics.WithLabelValues(requestPath, d.RequestMethod).Observe(d.Duration)
 
+		processLogEntry(&d, config.URLPatterns)
+
 		// Only JSON logs have Overhead metrics
 		if *jsonLogsPtr {
 			traefikOverhead.Observe(d.Overhead)

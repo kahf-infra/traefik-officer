@@ -69,24 +69,36 @@ func UpdateLastProcessedTime() {
 
 // HealthHandler handles health check requests
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
+	// Create a local copy of the status to avoid concurrent map writes
 	status := healthStatus.Load().(HealthStatus)
-	status.Uptime = time.Since(startupTime).Round(time.Second).String()
+	response := HealthStatus{
+		Status:     status.Status,
+		Uptime:     time.Since(startupTime).Round(time.Second).String(),
+		Components: make(map[string]string),
+		Error:      status.Error,
+	}
+
+	// Safely copy the components
+	for k, v := range status.Components {
+		response.Components[k] = v
+	}
 
 	// Check if we're processing logs
 	lastProcessed := lastProcessedTime.Load().(time.Time)
 	if time.Since(lastProcessed) > 5*time.Minute {
-		status.Components["log_processing"] = "stale"
-		if status.Status == "healthy" {
-			status.Status = "degraded"
-			status.Error = "No logs processed in the last 5 minutes"
+		response.Components["log_processing"] = "stale"
+		if response.Status == "healthy" {
+			response.Status = "degraded"
+			response.Error = "No logs processed in the last 5 minutes"
 		}
 	} else {
-		status.Components["log_processing"] = "active"
+		response.Components["log_processing"] = "active"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if status.Status != "healthy" {
+	if response.Status != "healthy" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	_ = json.NewEncoder(w).Encode(status)
+
+	_ = json.NewEncoder(w).Encode(response)
 }
