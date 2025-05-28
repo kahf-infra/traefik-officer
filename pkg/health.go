@@ -33,6 +33,17 @@ func init() {
 	lastProcessedTime.Store(time.Now())
 }
 
+// SetServiceReady updates the service status to ready
+func SetServiceReady() {
+	current := healthStatus.Load().(HealthStatus)
+	if current.Components == nil {
+		current.Components = make(map[string]string)
+	}
+	current.Status = "healthy"
+	current.Components["service"] = "running"
+	healthStatus.Store(current)
+}
+
 // UpdateHealthStatus updates the health status of a component
 func UpdateHealthStatus(component, status string, err error) {
 	current := healthStatus.Load().(HealthStatus)
@@ -59,22 +70,23 @@ func UpdateLastProcessedTime() {
 // HealthHandler handles health check requests
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	status := healthStatus.Load().(HealthStatus)
-	status.Uptime = time.Since(startupTime).String()
+	status.Uptime = time.Since(startupTime).Round(time.Second).String()
 
 	// Check if we're processing logs
-	if time.Since(lastProcessedTime.Load().(time.Time)) > 5*time.Minute {
+	lastProcessed := lastProcessedTime.Load().(time.Time)
+	if time.Since(lastProcessed) > 5*time.Minute {
 		status.Components["log_processing"] = "stale"
-		status.Status = "degraded"
-		status.Error = "No logs processed in the last 5 minutes"
+		if status.Status == "healthy" {
+			status.Status = "degraded"
+			status.Error = "No logs processed in the last 5 minutes"
+		}
+	} else {
+		status.Components["log_processing"] = "active"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if status.Status != "healthy" {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-
-	err := json.NewEncoder(w).Encode(status)
-	if err != nil {
-		return
-	}
+	_ = json.NewEncoder(w).Encode(status)
 }
