@@ -175,8 +175,13 @@ func main() {
 
 		logger.Debugf("Read Line: %s", logLine.Text)
 		d, err := parse(logLine.Text)
-		if err != nil && err.Error() == "ParseError" {
-			logger.Error("Parse error for: \n  %s", logLine.Text)
+		if err != nil {
+			// Skip lines that couldn't be parsed (already logged in parseLine)
+			if err.Error() != "not an access log line" && 
+			   err.Error() != "empty line" &&
+			   err.Error() != "invalid access log format" {
+				logger.Debugf("Parse error (%v) for line: %s", err, logLine.Text)
+			}
 			continue
 		}
 
@@ -309,8 +314,43 @@ func parseJSON(line string) (traefikJSONLog, error) {
 	return jsonLog, err
 }
 
+func isAccessLogLine(line string) bool {
+	// Check if the line starts with an IP address (simplified check)
+	if len(line) == 0 {
+		return false
+	}
+
+	// Look for common access log patterns
+	ipPattern := `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`
+	ipv6Pattern := `^[0-9a-fA-F:]+`
+	
+	matched, _ := regexp.MatchString(ipPattern, line)
+	if matched {
+		return true
+	}
+	
+	matched, _ = regexp.MatchString(ipv6Pattern, line)
+	if matched {
+		return true
+	}
+
+	return false
+}
+
 func parseLine(line string) (traefikJSONLog, error) {
-	var buffer bytes.Buffer                      // Stolen from traefik repo pkg/middlewares/accesslog/parser.go
+	// Skip empty lines
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return traefikJSONLog{}, errors.New("empty line")
+	}
+
+	// Quick check if this looks like an access log line
+	if !isAccessLogLine(line) {
+		logger.Debugf("Skipping non-access log line: %s", line)
+		return traefikJSONLog{}, errors.New("not an access log line")
+	}
+
+	var buffer bytes.Buffer
 	buffer.WriteString(`(\S+)`)                  // 1 - ClientHost
 	buffer.WriteString(`\s-\s`)                  // - - Spaces
 	buffer.WriteString(`(\S+)\s`)                // 2 - ClientUsername
@@ -329,47 +369,67 @@ func parseLine(line string) (traefikJSONLog, error) {
 
 	regex, err := regexp.Compile(buffer.String())
 	if err != nil {
-		err = errors.New("ParseError")
+		logger.Errorf("Failed to compile regex: %v", err)
+		return traefikJSONLog{}, errors.New("regex compilation error")
 	}
 
 	submatch := regex.FindStringSubmatch(line)
-	var log traefikJSONLog
-
-	if len(submatch) > 13 {
-		log.ClientHost = submatch[1]
-		log.StartUTC = submatch[3]
-		log.RequestMethod = submatch[4]
-		log.RequestPath = submatch[5]
-		log.RequestProtocol = submatch[6]
-		log.OriginStatus, _ = strconv.Atoi(submatch[7])
-		log.OriginContentSize, _ = strconv.Atoi(submatch[8])
-		log.RequestCount, _ = strconv.Atoi(submatch[11])
-		log.RouterName = strings.Trim(submatch[12], "\\\"")
-
-		latencyStr := strings.Trim(submatch[14], "ms")
-		log.Duration, err = strconv.ParseFloat(latencyStr, 64)
-		if err != nil {
-			logger.Errorf("Error converting %s to int\n", latencyStr)
-			logger.Errorf("From Line: %s\n\n", line)
-		}
-
-		logger.Debugf("ClientHost: %s", log.ClientHost)
-		logger.Debugf("StartUTC: %s", log.StartUTC)
-		logger.Debugf("RouterName: %s", extractServiceName(log.RouterName))
-		logger.Debugf("RequestMethod: %s", log.RequestMethod)
-		logger.Debugf("RequestPath: %s", log.RequestPath)
-		logger.Debugf("RequestProtocol: %s", log.RequestProtocol)
-		logger.Debugf("OriginStatus: %d", log.OriginStatus)
-		logger.Debugf("OriginContentSize: %d b", log.OriginContentSize)
-		logger.Debugf("RequestCount: %d", log.RequestCount)
-		logger.Debugf("Duration: %f ms", log.Duration)
-
-		return log, nil
+	if len(submatch) <= 13 {
+		logger.Debugf("Line doesn't match access log format (matched %d parts): %s", len(submatch), line)
+		return traefikJSONLog{}, errors.New("invalid access log format")
 	}
 
-	logger.Warn("Line not in access log format: %s", line)
-	err = errors.New("Access Log Line Invalid")
-	return log, err
+	var log traefikJSONLog
+	var parseErr error
+
+	// Safely extract fields with error handling
+	log.ClientHost = submatch[1]
+	log.StartUTC = submatch[3]
+	log.RequestMethod = submatch[4]
+	log.RequestPath = submatch[5]
+	log.RequestProtocol = submatch[6]
+
+	// Parse status code
+	if status, err := strconv.Atoi(submatch[7]); err == nil {
+		log.OriginStatus = status
+	} else {
+		logger.Debugf("Invalid status code '%s' in line: %s", submatch[7], line)
+		parseErr = errors.New("invalid status code")
+	}
+
+	// Parse content size
+	if size, err := strconv.Atoi(submatch[8]); err == nil {
+		log.OriginContentSize = size
+	} else {
+		logger.Debugf("Invalid content size '%s' in line: %s", submatch[8], line)
+		parseErr = errors.New("invalid content size")
+	}
+
+	// Parse request count
+	if count, err := strconv.Atoi(submatch[11]); err == nil {
+		log.RequestCount = count
+	} else {
+		logger.Debugf("Invalid request count '%s' in line: %s", submatch[11], line)
+		parseErr = errors.New("invalid request count")
+	}
+
+	log.RouterName = strings.Trim(submatch[12], "\"")
+
+
+	// Parse duration
+	latencyStr := strings.Trim(submatch[14], "ms")
+	if duration, err := strconv.ParseFloat(latencyStr, 64); err == nil {
+		log.Duration = duration
+	} else {
+		logger.Debugf("Invalid duration '%s' in line: %s", latencyStr, line)
+		parseErr = errors.New("invalid duration")
+	}
+
+	if logger.GetLevel() >= logger.DebugLevel {
+		logger.Debugf("Parsed access log: %+v", log)
+	}
+
+	return log, parseErr
 }
 
 func loadConfig(configLocation string) (traefikOfficerConfig, error) {
