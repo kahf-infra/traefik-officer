@@ -6,15 +6,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	ps "github.com/mitchellh/go-ps"
+	"github.com/mitchellh/go-ps"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	logger "github.com/sirupsen/logrus"
-	"io/ioutil"
-	"log"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,7 +22,7 @@ import (
 )
 
 // EstBytesPerLine Estimated number of bytes per line - for log rotation
-var EstBytesPerLine int = 150
+var EstBytesPerLine = 150
 
 var (
 	linesProcessed = promauto.NewCounter(prometheus.CounterOpts{
@@ -112,14 +112,30 @@ func main() {
 	logger.Info("Config File At:", *configLocationPtr)
 	logger.Info("Display Query Args In Metrics: ", *requestArgsPtr)
 	logger.Info("JSON Logs:", *jsonLogsPtr)
-	config, _ := loadConfig(*configLocationPtr)
-	go serveProm(*servePortPtr)
+	// Load configuration
+	config, err := loadConfig(*configLocationPtr)
+	if err != nil {
+		logger.Warnf("Failed to load configuration: %v. Using default configuration.", err)
+	}
+	go func() {
+		if err := serveProm(*servePortPtr); err != nil {
+			logger.Errorf("Metrics server error: %v", err)
+		}
+	}()
 
 	// Only set up log rotation for file mode
 	var linesToRotate int
 	if !*useK8sPtr {
+		if *maxFileBytesPtr <= 0 {
+			*maxFileBytesPtr = 10 // Default to 10MB if invalid value provided
+			logger.Warnf("Invalid max-accesslog-size %d, using default: 10MB", *maxFileBytesPtr)
+		}
+
 		linesToRotate = (1000000 * *maxFileBytesPtr) / EstBytesPerLine
-		fmt.Printf("Rotating logs every %s lines\n", strconv.Itoa(linesToRotate))
+		if linesToRotate <= 0 {
+			linesToRotate = 1000 // Ensure we have a reasonable minimum
+		}
+		logger.Infof("Rotating logs every %d lines (approximately %dMB)", linesToRotate, *maxFileBytesPtr)
 	}
 
 	fmt.Printf("Ignoring Namespaces: %s \nIgnoring Routers: %s\n Ignoring Paths: %s \n Merging Paths: %s\n Whitelist: %s\n",
@@ -132,7 +148,11 @@ func main() {
 		logger.Error("Failed to create log source:", err)
 		os.Exit(1)
 	}
-	defer logSource.Close()
+	defer func() {
+		if err := logSource.Close(); err != nil {
+			logger.Errorf("Error closing log source: %v", err)
+		}
+	}()
 
 	// Set up parser
 	var parse parser
@@ -169,7 +189,9 @@ func main() {
 			i++
 			if i >= linesToRotate {
 				i = 0
-				logRotate(*fileNamePtr)
+				if err := logRotate(*fileNamePtr); err != nil {
+					logger.Errorf("Error rotating log file: %v", err)
+				}
 			}
 		}
 
@@ -177,9 +199,9 @@ func main() {
 		d, err := parse(logLine.Text)
 		if err != nil {
 			// Skip lines that couldn't be parsed (already logged in parseLine)
-			if err.Error() != "not an access log line" && 
-			   err.Error() != "empty line" &&
-			   err.Error() != "invalid access log format" {
+			if err.Error() != "not an access log line" &&
+				err.Error() != "empty line" &&
+				err.Error() != "invalid access log format" {
 				logger.Debugf("Parse error (%v) for line: %s", err, logLine.Text)
 			}
 			continue
@@ -270,7 +292,8 @@ func checkMatches(str string, matchExpressions []string) bool {
 		reg, err := regexp.Compile(expr)
 
 		if err != nil {
-			logger.Error("Error compiling regex: %s \n", expr)
+			logger.Errorf("Error compiling regex '%s': %v", expr, err)
+			continue // Skip this pattern if it doesn't compile
 		}
 
 		if reg.MatchString(str) {
@@ -281,24 +304,24 @@ func checkMatches(str string, matchExpressions []string) bool {
 }
 
 func parseJSON(line string) (traefikJSONLog, error) {
+	var err error
 	var jsonLog traefikJSONLog
-	var jsonValid bool
-	jsonValid = json.Valid([]byte(line))
 
-	if !jsonValid {
-		err := errors.New("JSON Log line invalid")
-		logger.Errorf("%s '%s'", err, line)
+	if !json.Valid([]byte(line)) {
+		err := fmt.Errorf("invalid JSON format in log line: %s", line)
+		logger.Error(err)
+		return traefikJSONLog{}, err
 	}
 
-	err := json.Unmarshal([]byte(line), &jsonLog)
-	if err != nil {
-		logger.Error(err)
+	if err := json.Unmarshal([]byte(line), &jsonLog); err != nil {
+		logger.Errorf("Failed to unmarshal JSON log: %v", err)
+		return traefikJSONLog{}, fmt.Errorf("failed to unmarshal JSON log: %w", err)
 	}
 
 	jsonLog.Duration = jsonLog.Duration / 1000000 // JSON Logs format latency in nanoseconds, convert to ms
 	jsonLog.Overhead = jsonLog.Overhead / 1000000 // sane for overhead metrics
 
-	logger.Debugf("JSON Parsed: %s", jsonLog)
+	logger.Debugf("JSON Parsed: %+v", jsonLog)
 	logger.Debugf("ClientHost: %s", jsonLog.ClientHost)
 	logger.Debugf("StartUTC: %s", jsonLog.StartUTC)
 	logger.Debugf("RouterName: %s", extractServiceName(jsonLog.RouterName))
@@ -315,7 +338,6 @@ func parseJSON(line string) (traefikJSONLog, error) {
 }
 
 func isAccessLogLine(line string) bool {
-	// Check if the line starts with an IP address (simplified check)
 	if len(line) == 0 {
 		return false
 	}
@@ -323,14 +345,18 @@ func isAccessLogLine(line string) bool {
 	// Look for common access log patterns
 	ipPattern := `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`
 	ipv6Pattern := `^[0-9a-fA-F:]+`
-	
-	matched, _ := regexp.MatchString(ipPattern, line)
-	if matched {
+
+	matched, err := regexp.MatchString(ipPattern, line)
+	if err != nil {
+		logger.Debugf("Error matching IPv4 pattern: %v", err)
+	} else if matched {
 		return true
 	}
-	
-	matched, _ = regexp.MatchString(ipv6Pattern, line)
-	if matched {
+
+	matched, err = regexp.MatchString(ipv6Pattern, line)
+	if err != nil {
+		logger.Debugf("Error matching IPv6 pattern: %v", err)
+	} else if matched {
 		return true
 	}
 
@@ -369,8 +395,9 @@ func parseLine(line string) (traefikJSONLog, error) {
 
 	regex, err := regexp.Compile(buffer.String())
 	if err != nil {
-		logger.Errorf("Failed to compile regex: %v", err)
-		return traefikJSONLog{}, errors.New("regex compilation error")
+		err = fmt.Errorf("failed to compile regex: %w", err)
+		logger.Error(err)
+		return traefikJSONLog{}, err
 	}
 
 	submatch := regex.FindStringSubmatch(line)
@@ -415,7 +442,6 @@ func parseLine(line string) (traefikJSONLog, error) {
 
 	log.RouterName = strings.Trim(submatch[12], "\"")
 
-
 	// Parse duration
 	latencyStr := strings.Trim(submatch[14], "ms")
 	if duration, err := strconv.ParseFloat(latencyStr, 64); err == nil {
@@ -433,97 +459,193 @@ func parseLine(line string) (traefikJSONLog, error) {
 }
 
 func loadConfig(configLocation string) (traefikOfficerConfig, error) {
-	cfgFile, err := os.Open(configLocation)
-	if err != nil {
-		logger.Errorf("Error opening config file: %s", configLocation)
-		var emptyConf traefikOfficerConfig
-		return emptyConf, err
-	}
-	defer cfgFile.Close()
 	var config traefikOfficerConfig
 
-	byteValue, err := ioutil.ReadAll(cfgFile)
-	if err != nil {
-		logger.Error("Failed to read config file\n")
+	if configLocation == "" {
+		logger.Warn("No config file specified, using default configuration")
+		return config, nil
 	}
 
-	err = json.Unmarshal(byteValue, &config)
+	cfgFile, err := os.Open(configLocation)
 	if err != nil {
-		logger.Error(err)
+		return config, fmt.Errorf("error opening config file %s: %w", configLocation, err)
+	}
+	defer func() {
+		if err := cfgFile.Close(); err != nil {
+			logger.Warnf("Error closing config file: %v", err)
+		}
+	}()
+
+	byteValue, err := io.ReadAll(cfgFile)
+	if err != nil {
+		return config, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	if len(byteValue) == 0 {
+		logger.Warn("Config file is empty, using default configuration")
+		return config, nil
+	}
+
+	if err := json.Unmarshal(byteValue, &config); err != nil {
+		return config, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Initialize slices if they are nil to prevent nil pointer dereferences
+	if config.IgnoredNamespaces == nil {
+		config.IgnoredNamespaces = []string{}
+	}
+	if config.IgnoredRouters == nil {
+		config.IgnoredRouters = []string{}
+	}
+	if config.IgnoredPathsRegex == nil {
+		config.IgnoredPathsRegex = []string{}
+	}
+	if config.MergePathsWithExtensions == nil {
+		config.MergePathsWithExtensions = []string{}
+	}
+	if config.WhitelistPaths == nil {
+		config.WhitelistPaths = []string{}
+	}
+	if config.URLPatterns == nil {
+		config.URLPatterns = []URLPattern{}
+	}
+
+	// Compile regex patterns
 	for i := range config.URLPatterns {
 		regex, err := regexp.Compile(config.URLPatterns[i].Pattern)
 		if err != nil {
-			log.Printf("Invalid regex pattern for %s: %v", config.URLPatterns[i].Name, err)
+			logger.Warnf("Invalid regex pattern for %s: %v - pattern will be ignored", config.URLPatterns[i].Name, err)
 			continue
 		}
 		config.URLPatterns[i].Regex = regex
 	}
+
 	return config, nil
 }
 
-func logRotate(accessLogLocation string) {
-	processList, err := ps.Processes()
-	if err != nil {
-		log.Println("ps.Processes() Failed, are you using windows?")
-		return
+func logRotate(accessLogLocation string) error {
+	if accessLogLocation == "" {
+		return errors.New("access log location cannot be empty")
 	}
 
-	traefikPid := -1
-	for x := range processList {
-		var process ps.Process
-		process = processList[x]
-		if process.Executable() == "traefik" {
-			traefikPid = process.Pid()
-		}
+	// Get the Traefik process
+	traefikPid, err := findTraefikProcess()
+	if err != nil {
+		return fmt.Errorf("failed to find Traefik process: %w", err)
 	}
 
 	if traefikPid == -1 {
-		logger.Warn("Could not find traefik process - not rotating!\n")
-		return
+		return errors.New("traefik process not found")
 	}
 
-	fmt.Printf("Found traefik process @ PID %s\n", strconv.Itoa(traefikPid))
+	logger.Infof("Found Traefik process @ PID %d", traefikPid)
 
 	traefikProcess, err := os.FindProcess(traefikPid)
 	if err != nil {
-		logger.Warn("Could not find process with PID process - Not rotating!")
-		return
+		return fmt.Errorf("failed to find process with PID %d: %w", traefikPid, err)
 	}
 
-	deleteFile(accessLogLocation)
-	createFile(accessLogLocation)
-
-	// Tells traefik to reload the file it's writing to.
-	traefikProcess.Signal(syscall.SIGUSR1)
-
-}
-
-func createFile(path string) {
-	// check if a file exists
-	var _, err = os.Stat(path)
-
-	// create a file if not exists
-	if os.IsNotExist(err) {
-		var file, err = os.Create(path)
-		if err != nil {
-			return
-		}
-		file.Close()
+	// Delete and recreate the log file
+	if err := deleteFile(accessLogLocation); err != nil {
+		return fmt.Errorf("failed to delete log file: %w", err)
 	}
+
+	if err := createFile(accessLogLocation); err != nil {
+		return fmt.Errorf("failed to create new log file: %w", err)
+	}
+
+	// Send USR1 signal to Traefik to reopen log files
+	if err := traefikProcess.Signal(syscall.SIGUSR1); err != nil {
+		return fmt.Errorf("failed to send SIGUSR1 to Traefik process: %w", err)
+	}
+
+	logger.Info("Successfully rotated log file and signaled Traefik")
+	return nil
 }
 
-func deleteFile(path string) {
-	// delete a file
-	var err = os.Remove(path)
+// findTraefikProcess finds the Traefik process and returns its PID
+func findTraefikProcess() (int, error) {
+	processList, err := ps.Processes()
 	if err != nil {
-		logger.Warn("Deleting accessLog failed.\n")
-		return
+		return -1, fmt.Errorf("failed to list processes: %w", err)
 	}
+
+	for _, process := range processList {
+		if process.Executable() == "traefik" {
+			return process.Pid(), nil
+		}
+	}
+
+	return -1, nil
 }
 
-func serveProm(port string) {
+func createFile(path string) error {
+	if path == "" {
+		return errors.New("path cannot be empty")
+	}
+
+	// Check if file already exists
+	if _, err := os.Stat(path); err == nil {
+		logger.Debugf("File %s already exists", path)
+		return nil
+	}
+
+	// Create parent directories if they don't exist
+	dir := filepath.Dir(path)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	// Create the file with appropriate permissions (read/write for owner, read for others)
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", path, err)
+	}
+
+	if err := file.Close(); err != nil {
+		logger.Warnf("Error closing file %s: %v", path, err)
+	}
+
+	logger.Infof("Created file: %s", path)
+	return nil
+}
+
+func deleteFile(path string) error {
+	if path == "" {
+		return errors.New("path cannot be empty")
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		logger.Debugf("File %s does not exist, nothing to delete", path)
+		return nil
+	}
+
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("failed to delete file %s: %w", path, err)
+	}
+
+	logger.Debugf("Successfully deleted file: %s", path)
+	return nil
+}
+
+func serveProm(port string) error {
+	if port == "" {
+		return errors.New("port cannot be empty")
+	}
+
+	addr := ":" + port
 	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(":"+port, nil)
+	logger.Infof("Starting metrics server on %s/metrics", addr)
+
+	server := &http.Server{
+		Addr: addr,
+	}
+
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("failed to start metrics server: %w", err)
+	}
+
+	return nil
 }
