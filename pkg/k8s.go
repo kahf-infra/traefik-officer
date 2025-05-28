@@ -15,14 +15,12 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-func int64Ptr(i int64) *int64 {
-	return &i
-}
-
 const (
-	maxRetries     = 10
-	initialBackoff = 1 * time.Second
-	maxBackoff     = 5 * time.Minute
+	maxRetries          = 10
+	initialBackoff      = 1 * time.Second
+	maxBackoff          = 5 * time.Minute
+	syncInterval        = 30 * time.Second // How often to sync pod list
+	podDiscoveryTimeout = 5 * time.Minute  // How long to cache pod info
 )
 
 // podStream represents a running log stream for a pod
@@ -40,8 +38,10 @@ type KubernetesLogSource struct {
 	lines         chan LogLine
 
 	// For managing pod streams
-	podStreams map[string]*podStream
-	podMutex   sync.Mutex
+	podStreams  map[string]*podStream
+	podMutex    sync.Mutex
+	lastPodSync time.Time
+	lastPodList []v1.Pod
 
 	// For graceful shutdown
 	stopCh chan struct{}
@@ -99,35 +99,48 @@ func (kls *KubernetesLogSource) watchPods() {
 		Cap:      maxBackoff,
 	}
 
+	ticker := time.NewTicker(syncInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-kls.stopCh:
 			return
-		default:
-			// Continue with the sync
-		}
+		case <-ticker.C:
+			// Only sync if we haven't synced recently
+			if time.Since(kls.lastPodSync) < syncInterval {
+				continue
+			}
 
-		err := wait.ExponentialBackoff(backoff, func() (bool, error) {
-			return kls.syncPods()
-		})
+			err := wait.ExponentialBackoff(backoff, func() (bool, error) {
+				success, err := kls.syncPods()
+				if success {
+					kls.lastPodSync = time.Now()
+				}
+				return success, err
+			})
 
-		if err != nil {
-			logger.Errorf("Failed to sync pods after %d attempts: %v", maxRetries, err)
-			// Reset backoff and try again
-			time.Sleep(initialBackoff)
+			if err != nil {
+				logger.Warnf("Failed to sync pods: %v", err)
+			}
 		}
 	}
 }
 
 // syncPods synchronizes the current state of pods with the desired state
 func (kls *KubernetesLogSource) syncPods() (bool, error) {
+	// Use cached pod list if it's still fresh
+	if len(kls.lastPodList) > 0 && time.Since(kls.lastPodSync) < podDiscoveryTimeout {
+		return true, nil
+	}
+
 	// List all pods matching the label selector
 	pods, err := kls.clientSet.CoreV1().Pods(kls.namespace).List(context.Background(), metav1.ListOptions{
 		LabelSelector: kls.labelSelector,
 	})
 
 	if err != nil {
-		logger.Errorf("Error listing pods: %v", err)
+		logger.Warnf("Error listing pods: %v", err)
 		return false, fmt.Errorf("error listing pods: %v", err)
 	}
 
@@ -136,7 +149,12 @@ func (kls *KubernetesLogSource) syncPods() (bool, error) {
 		return false, fmt.Errorf("no pods found with selector: %s", kls.labelSelector)
 	}
 
-	logger.Infof("Found %d pods with selector %s", len(pods.Items), kls.labelSelector)
+	if logger.GetLevel() >= logger.DebugLevel {
+		logger.Debugf("Found %d pods with selector %s", len(pods.Items), kls.labelSelector)
+	}
+
+	// Update the cached pod list
+	kls.lastPodList = pods.Items
 
 	// Track current pods to detect removed ones
 	currentPods := make(map[string]bool)
@@ -243,7 +261,7 @@ func (kls *KubernetesLogSource) streamPodLogsWithRetry(ctx context.Context, podN
 func (kls *KubernetesLogSource) streamPodLogs(ctx context.Context, podName string) error {
 	// Get current time to only stream logs from this point forward
 	sinceTime := metav1.NewTime(time.Now())
-	
+
 	req := kls.clientSet.CoreV1().Pods(kls.namespace).GetLogs(podName, &v1.PodLogOptions{
 		Container: kls.containerName,
 		Follow:    true,

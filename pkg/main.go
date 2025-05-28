@@ -343,20 +343,32 @@ func isAccessLogLine(line string) bool {
 	}
 
 	// Look for common access log patterns
-	ipPattern := `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`
+	// Pattern 1: Starts with IP address (IPv4 or IPv6)
+	ipv4Pattern := `^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`
 	ipv6Pattern := `^[0-9a-fA-F:]+`
+	
+	// Pattern 2: Starts with [pod-name] followed by IP address
+	podPattern := `^\[[^\]]+\]\s+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`
 
-	matched, err := regexp.MatchString(ipPattern, line)
-	if err != nil {
-		logger.Debugf("Error matching IPv4 pattern: %v", err)
-	} else if matched {
+	// Check for IPv4 at start of line
+	if matched, _ := regexp.MatchString(ipv4Pattern, line); matched {
 		return true
 	}
 
-	matched, err = regexp.MatchString(ipv6Pattern, line)
-	if err != nil {
-		logger.Debugf("Error matching IPv6 pattern: %v", err)
-	} else if matched {
+	// Check for IPv6 at start of line
+	if matched, _ := regexp.MatchString(ipv6Pattern, line); matched {
+		return true
+	}
+
+	// Check for pod name prefix with [pod-name] format
+	if matched, _ := regexp.MatchString(podPattern, line); matched {
+		return true
+	}
+
+	// Additional check for common log patterns that might indicate an access log
+	// This catches lines that have a timestamp in common log format
+	commonLogPattern := `\[\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2} [\+\-]\d{4}\]`
+	if matched, _ := regexp.MatchString(commonLogPattern, line); matched {
 		return true
 	}
 
