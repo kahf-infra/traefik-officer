@@ -106,7 +106,7 @@ func (kls *KubernetesLogSource) Close() error {
 // Add this function
 func discoverTraefikPod(clientset *kubernetes.Clientset, namespace string) (string, error) {
 	pods, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
-		LabelSelector: "app=traefik", // Adjust based on your Traefik labels
+		LabelSelector: "app.kubernetes.io/name=traefik", // Adjust based on your Traefik labels
 	})
 	if err != nil {
 		return "", err
