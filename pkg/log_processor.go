@@ -43,6 +43,12 @@ func processLogs(logSource LogSource, parse parser, whiteListChecker func(string
 			continue
 		}
 
+		// Check if this service should be ignored
+		if contains(config.IgnoredServices, extractServiceName(d.RouterName)) {
+			logger.Debugf("Ignoring service: %s", d.RouterName)
+			continue
+		}
+
 		// Push metrics to prometheus exporter
 		linesProcessed.Inc()
 

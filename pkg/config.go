@@ -17,6 +17,7 @@ type traefikOfficerConfig struct {
 	MergePathsWithExtensions []string     `json:"MergePathsWithExtensions"`
 	WhitelistPaths           []string     `json:"WhitelistPaths"`
 	URLPatterns              []URLPattern `json:"URLPatterns"`
+	IgnoredServices          []string     `json:"IgnoredServices"`
 }
 
 type traefikJSONLog struct {

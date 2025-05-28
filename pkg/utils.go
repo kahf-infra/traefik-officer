@@ -336,3 +336,13 @@ func deleteFile(path string) error {
 	logger.Debugf("Successfully deleted file: %s", path)
 	return nil
 }
+
+// Helper function to check if a string is in a slice
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
