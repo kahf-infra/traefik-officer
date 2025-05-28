@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	logger "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -18,9 +20,9 @@ import (
 const (
 	maxRetries          = 10
 	initialBackoff      = 1 * time.Second
-	maxBackoff          = 5 * time.Minute
-	syncInterval        = 30 * time.Second // How often to sync pod list
-	podDiscoveryTimeout = 5 * time.Minute  // How long to cache pod info
+	maxBackoff          = 1 * time.Minute  // Reduced from 5 minutes
+	syncInterval        = 10 * time.Second // Reduced from 30s for faster recovery
+	podDiscoveryTimeout = 15 * time.Second // Reduced from 5m for faster pod discovery
 )
 
 // podStream represents a running log stream for a pod
@@ -129,8 +131,8 @@ func (kls *KubernetesLogSource) watchPods() {
 
 // syncPods synchronizes the current state of pods with the desired state
 func (kls *KubernetesLogSource) syncPods() (bool, error) {
-	// Use cached pod list if it's still fresh
-	if len(kls.lastPodList) > 0 && time.Since(kls.lastPodSync) < podDiscoveryTimeout {
+	// Only use cache if we have a recent successful sync
+	if !kls.lastPodSync.IsZero() && time.Since(kls.lastPodSync) < podDiscoveryTimeout {
 		return true, nil
 	}
 
@@ -153,8 +155,11 @@ func (kls *KubernetesLogSource) syncPods() (bool, error) {
 		logger.Debugf("Found %d pods with selector %s", len(pods.Items), kls.labelSelector)
 	}
 
-	// Update the cached pod list
+	// Update the cached pod list and sync time
+	kls.podMutex.Lock()
 	kls.lastPodList = pods.Items
+	kls.podMutex.Unlock()
+	kls.lastPodSync = time.Now()
 
 	// Track current pods to detect removed ones
 	currentPods := make(map[string]bool)
@@ -236,11 +241,27 @@ func (kls *KubernetesLogSource) streamPodLogsWithRetry(ctx context.Context, podN
 		case <-ctx.Done():
 			return
 		default:
-			err := kls.streamPodLogs(ctx, podName)
+			// Check if pod still exists before trying to stream
+			exists, err := kls.podExists(podName)
+			if err != nil {
+				logger.Warnf("Error checking pod %s existence: %v", podName, err)
+			}
+			if !exists {
+				logger.Infof("Pod %s no longer exists, stopping log stream", podName)
+				return
+			}
+
+			err = kls.streamPodLogs(ctx, podName)
 			if err != nil {
 				if wait.Interrupted(err) {
 					logger.Infof("Stopping log streaming for pod %s", podName)
 					return
+				}
+
+				// If pod is not found, force a pod resync
+				if strings.Contains(err.Error(), "not found") {
+					logger.Debugf("Pod %s not found, forcing pod resync", podName)
+					kls.forcePodResync()
 				}
 
 				// Log the error and retry with backoff
@@ -255,6 +276,25 @@ func (kls *KubernetesLogSource) streamPodLogsWithRetry(ctx context.Context, podN
 			time.Sleep(time.Second)
 		}
 	}
+}
+
+// podExists checks if a pod exists in the cluster
+func (kls *KubernetesLogSource) podExists(podName string) (bool, error) {
+	_, err := kls.clientSet.CoreV1().Pods(kls.namespace).Get(context.Background(), podName, metav1.GetOptions{})
+	if err == nil {
+		return true, nil
+	}
+	if k8serrors.IsNotFound(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// forcePodResync forces an immediate pod resync by clearing the last sync time
+func (kls *KubernetesLogSource) forcePodResync() {
+	kls.podMutex.Lock()
+	defer kls.podMutex.Unlock()
+	kls.lastPodSync = time.Time{} // Zero time will force a resync
 }
 
 // streamPodLogs handles the actual log streaming for a single pod
