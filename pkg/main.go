@@ -6,7 +6,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	ps "github.com/mitchellh/go-ps"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	logger "github.com/sirupsen/logrus"
 	"io/ioutil"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"log"
 	"net/http"
 	"os"
@@ -14,13 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-
-	"github.com/hpcloud/tail"
-	ps "github.com/mitchellh/go-ps"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	logger "github.com/sirupsen/logrus"
 )
 
 // EstBytesPerLine Estimated number of bytes per line - for log rotation
@@ -90,32 +90,76 @@ func main() {
 		"If true, parse JSON logs instead of accessLog format")
 	passLogAboveThresholdPtr := flag.Float64("pass-log-above-threshold", 1,
 		"Passthrough traefik accessLog line to stdout if request takes longer that X seconds. Only whitelisted request paths.")
+
+	// New Kubernetes flags
+	useK8sPtr := flag.Bool("use-k8s", false, "Read logs from Kubernetes pod instead of file")
+	podNamePtr := flag.String("pod-name", "", "Kubernetes pod name (required if use-k8s is true)")
+	namespacePtr := flag.String("namespace", "ingress-controller", "Kubernetes namespace")
+	containerNamePtr := flag.String("container-name", "traefik", "Container name in the pod")
+	dynamicPodPtr := flag.Bool("auto-discover-pod", false, "Automatically discover Traefik pod")
+
 	flag.Parse()
 
 	if *debugLogPtr {
 		logger.SetLevel(logger.DebugLevel)
 	}
 
-	logger.Info("Access Logs At:", *fileNamePtr)
+	if *dynamicPodPtr {
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			logger.Info("Not in cluster, trying kubeconfig...")
+		}
+
+		clientSet, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			logger.Error("kubernetes client error:", err)
+			os.Exit(1)
+		}
+
+		*podNamePtr, err = discoverTraefikPod(clientSet, *namespacePtr)
+		if err != nil {
+			logger.Error("Failed to discover Traefik pod:", err)
+			os.Exit(1)
+		}
+	}
+
+	// Validate Kubernetes configuration
+	if *useK8sPtr {
+		if *podNamePtr == "" {
+			logger.Error("pod-name is required when use-k8s is true")
+			os.Exit(1)
+		}
+		logger.Info("Kubernetes Mode - Pod:", *podNamePtr, "Namespace:", *namespacePtr, "Container:", *containerNamePtr)
+	} else {
+		logger.Info("File Mode - Access Logs At:", *fileNamePtr)
+	}
+
 	logger.Info("Config File At:", *configLocationPtr)
 	logger.Info("Display Query Args In Metrics: ", *requestArgsPtr)
 	logger.Info("JSON Logs:", *jsonLogsPtr)
 	config, _ := loadConfig(*configLocationPtr)
 	go serveProm(*servePortPtr)
 
-	linesToRotate := (1000000 * *maxFileBytesPtr) / EstBytesPerLine
-	fmt.Printf("Rotating logs every %s lines\n", strconv.Itoa(linesToRotate))
+	// Only set up log rotation for file mode
+	var linesToRotate int
+	if !*useK8sPtr {
+		linesToRotate = (1000000 * *maxFileBytesPtr) / EstBytesPerLine
+		fmt.Printf("Rotating logs every %s lines\n", strconv.Itoa(linesToRotate))
+	}
 
 	fmt.Printf("Ignoring Namespaces: %s \nIgnoring Routers: %s\n Ignoring Paths: %s \n Merging Paths: %s\n Whitelist: %s\n",
 		config.IgnoredNamespaces, config.IgnoredRouters, config.IgnoredPathsRegex, config.MergePathsWithExtensions,
 		config.WhitelistPaths)
 
-	tCfg := tail.Config{
-		Follow:    true,
-		ReOpen:    true,
-		MustExist: false,
-		Poll:      true,
+	// Create log source
+	logSource, err := createLogSource(*useK8sPtr, *fileNamePtr, *podNamePtr, *namespacePtr, *containerNamePtr)
+	if err != nil {
+		logger.Error("Failed to create log source:", err)
+		os.Exit(1)
 	}
+	defer logSource.Close()
+
+	// Set up parser
 	var parse parser
 	if *jsonLogsPtr {
 		logger.Info("Setting parser to JSON")
@@ -135,75 +179,77 @@ func main() {
 		whiteListChecker = checkWhiteListStrict
 	}
 
-	logger.Info("Opening file\n")
-	t, err := tail.TailFile(*fileNamePtr, tCfg)
-	for {
-		if err != nil {
-			logger.Error(err)
-			os.Exit(1)
+	logger.Info("Starting log processing")
+
+	// Main processing loop
+	i := 0
+	for logLine := range logSource.ReadLines() {
+		if logLine.Err != nil {
+			logger.Error("Log reading error:", logLine.Err)
+			continue
 		}
 
-		logger.Info("Starting read\n")
-		i := 0
-		for line := range t.Lines {
+		// Only rotate logs in file mode
+		if !*useK8sPtr {
 			i++
 			if i >= linesToRotate {
 				i = 0
 				logRotate(*fileNamePtr)
 			}
-			logger.Debugf("Read Line: %s", line.Text)
-			d, err := parse(line.Text)
-			if err != nil && err.Error() == "ParseError" {
-				logger.Error("Parse error for: \n  %s", line.Text)
-				continue
-			}
-
-			// Push metrics to prometheus exporter
-			linesProcessed.Inc()
-
-			requestPath := d.RequestPath
-			if *requestArgsPtr == false {
-				logger.Debug("Trimming query arguments")
-				requestPath = strings.Split(d.RequestPath, "?")[0]
-				requestPath = strings.Split(requestPath, "&")[0]
-
-				// Merge paths where query args are embedded in the url (/api/arg1/arg1)
-				requestPath = mergePaths(requestPath, config.MergePathsWithExtensions)
-			}
-
-			// Check whether a path is in the allowlist:
-			isWhitelisted := whiteListChecker(requestPath, config.WhitelistPaths)
-
-			if !isWhitelisted && *strictWhiteListPtr {
-				linesIgnored.Inc()
-				continue
-			}
-			if !isWhitelisted {
-				// Check whether router name matches ignored namespace, router or path regex.
-				ignoreMatched := checkMatches(d.RouterName, config.IgnoredNamespaces) ||
-					checkMatches(d.RouterName, config.IgnoredRouters) || checkMatches(requestPath, config.IgnoredPathsRegex)
-
-				if ignoreMatched {
-					linesIgnored.Inc()
-					logger.Debug("Ignoring line, due to ignore rule: ", line.Text)
-					continue
-				}
-			}
-
-			if d.Duration > *passLogAboveThresholdPtr && isWhitelisted {
-				logger.Info("Request took longer than threshold: ", *passLogAboveThresholdPtr)
-				fmt.Println(line.Text)
-			}
-
-			// Not ignored, publish metric
-			latencyMetrics.WithLabelValues(requestPath, d.RequestMethod).Observe(d.Duration)
-
-			// Only JSON logs have Overhead metrics
-			if *jsonLogsPtr {
-				traefikOverhead.Observe(d.Overhead)
-			}
-			processLogEntry(&d, config.URLPatterns)
 		}
+
+		logger.Debugf("Read Line: %s", logLine.Text)
+		d, err := parse(logLine.Text)
+		if err != nil && err.Error() == "ParseError" {
+			logger.Error("Parse error for: \n  %s", logLine.Text)
+			continue
+		}
+
+		// Push metrics to prometheus exporter
+		linesProcessed.Inc()
+
+		requestPath := d.RequestPath
+		if *requestArgsPtr == false {
+			logger.Debug("Trimming query arguments")
+			requestPath = strings.Split(d.RequestPath, "?")[0]
+			requestPath = strings.Split(requestPath, "&")[0]
+
+			// Merge paths where query args are embedded in the url (/api/arg1/arg1)
+			requestPath = mergePaths(requestPath, config.MergePathsWithExtensions)
+		}
+
+		// Check whether a path is in the allowlist:
+		isWhitelisted := whiteListChecker(requestPath, config.WhitelistPaths)
+
+		if !isWhitelisted && *strictWhiteListPtr {
+			linesIgnored.Inc()
+			continue
+		}
+		if !isWhitelisted {
+			// Check whether router name matches ignored namespace, router or path regex.
+			ignoreMatched := checkMatches(d.RouterName, config.IgnoredNamespaces) ||
+				checkMatches(d.RouterName, config.IgnoredRouters) || checkMatches(requestPath, config.IgnoredPathsRegex)
+
+			if ignoreMatched {
+				linesIgnored.Inc()
+				logger.Debug("Ignoring line, due to ignore rule: ", logLine.Text)
+				continue
+			}
+		}
+
+		if d.Duration > *passLogAboveThresholdPtr && isWhitelisted {
+			logger.Info("Request took longer than threshold: ", *passLogAboveThresholdPtr)
+			fmt.Println(logLine.Text)
+		}
+
+		// Not ignored, publish metric
+		latencyMetrics.WithLabelValues(requestPath, d.RequestMethod).Observe(d.Duration)
+
+		// Only JSON logs have Overhead metrics
+		if *jsonLogsPtr {
+			traefikOverhead.Observe(d.Overhead)
+		}
+		processLogEntry(&d, config.URLPatterns)
 	}
 }
 
