@@ -90,7 +90,7 @@ func loadConfig(configLocation string) (traefikOfficerConfig, error) {
 	for i := range config.URLPatterns {
 		regex, err := regexp.Compile(config.URLPatterns[i].Pattern)
 		if err != nil {
-			logger.Warnf("Invalid regex pattern for %s: %v - pattern will be ignored", config.URLPatterns[i].Name, err)
+			logger.Warnf("Invalid regex pattern for %s: %v - pattern will be ignored", config.URLPatterns[i].Replacement, err)
 			continue
 		}
 		config.URLPatterns[i].Regex = regex

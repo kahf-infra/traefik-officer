@@ -13,7 +13,7 @@ import (
 type URLPattern struct {
 	ServiceName string         `json:"service_name"`
 	Pattern     string         `json:"pattern"`
-	Name        string         `json:"name"`
+	Replacement string         `json:"replacement"`
 	Regex       *regexp.Regexp `json:"-"`
 }
 
@@ -149,7 +149,8 @@ func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
 	for _, pattern := range urlPatterns {
 		if pattern.ServiceName == serviceName && pattern.Regex != nil {
 			if pattern.Regex.MatchString(path) {
-				return pattern.Name
+				match := regexp.MustCompile(pattern.Regex.String())
+				return match.ReplaceAllString(path, pattern.Replacement)
 			}
 		}
 	}
@@ -158,7 +159,8 @@ func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
 	for _, pattern := range urlPatterns {
 		if pattern.ServiceName == "" && pattern.Regex != nil {
 			if pattern.Regex.MatchString(path) {
-				return pattern.Name
+				match := regexp.MustCompile(pattern.Regex.String())
+				return match.ReplaceAllString(path, pattern.Replacement)
 			}
 		}
 	}
@@ -177,6 +179,10 @@ func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
 	// Replace other common patterns (long alphanumeric strings)
 	re3 := regexp.MustCompile(`/[a-zA-Z0-9]{20,}(/|$|\?)`)
 	normalized = re3.ReplaceAllString(normalized, "/{token}$1")
+
+	// Replace query params
+	re4 := regexp.MustCompile(`\?.*`)
+	normalized = re4.ReplaceAllString(normalized, "?{query_params}")
 
 	return normalized
 }
