@@ -75,7 +75,10 @@ func processLogs(logSource LogSource, parse parser, whiteListChecker func(string
 			continue
 		}
 
-		//updateV1metric(&d, config, logLine, whiteListChecker, requestArgsPtr, strictWhiteListPtr, passLogAboveThresholdPtr)
+		proceedNext := updateV1metric(&d, config, logLine, whiteListChecker, requestArgsPtr, strictWhiteListPtr, passLogAboveThresholdPtr)
+		if proceedNext {
+			continue
+		}
 
 		processLogEntry(&d, config.URLPatterns)
 
@@ -86,7 +89,7 @@ func processLogs(logSource LogSource, parse parser, whiteListChecker func(string
 	}
 }
 
-func updateV1metric(d *traefikJSONLog, config traefikOfficerConfig, logLine LogLine, whiteListChecker func(string, []string) bool, requestArgsPtr *bool, strictWhiteListPtr *bool, passLogAboveThresholdPtr *float64) {
+func updateV1metric(d *traefikJSONLog, config traefikOfficerConfig, logLine LogLine, whiteListChecker func(string, []string) bool, requestArgsPtr *bool, strictWhiteListPtr *bool, passLogAboveThresholdPtr *float64) (proceedNext bool) {
 	// Push metrics to prometheus exporter
 	linesProcessed.Inc()
 
@@ -105,7 +108,7 @@ func updateV1metric(d *traefikJSONLog, config traefikOfficerConfig, logLine LogL
 
 	if !isWhitelisted && *strictWhiteListPtr {
 		linesIgnored.Inc()
-		return
+		return true
 	}
 	if !isWhitelisted {
 		// Check whether router name matches ignored namespace, router or path regex.
@@ -115,7 +118,7 @@ func updateV1metric(d *traefikJSONLog, config traefikOfficerConfig, logLine LogL
 		if ignoreMatched {
 			linesIgnored.Inc()
 			logger.Debug("Ignoring line, due to ignore rule: ", logLine.Text)
-			return
+			return true
 		}
 	}
 
@@ -126,4 +129,5 @@ func updateV1metric(d *traefikJSONLog, config traefikOfficerConfig, logLine LogL
 
 	// Not ignored, publish metric
 	latencyMetrics.WithLabelValues(requestPath, d.RequestMethod).Observe(d.Duration)
+	return false
 }
