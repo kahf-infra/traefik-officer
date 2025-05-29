@@ -3,38 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	logger "github.com/sirupsen/logrus"
 	"os"
 )
 
 // EstBytesPerLine Estimated number of bytes per line - for log rotation
 var EstBytesPerLine = 150
-
-var (
-	linesProcessed = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "traefik_officer_lines_processed",
-		Help: "Number of access log lines processed",
-	})
-
-	linesIgnored = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "traefik_officer_lines_ignored",
-		Help: "Number of access log lines ignored from latency metrics",
-	})
-
-	traefikOverhead = promauto.NewSummary(prometheus.SummaryOpts{
-		Name: "traefik_officer_traefik_overhead",
-		Help: "The overhead caused by traefik processing of requests",
-	})
-
-	latencyMetrics = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "traefik_officer_latency",
-		Help:    "Latency metrics per service / endpoint",
-		Buckets: []float64{0, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 20000, 60000},
-	},
-		[]string{"RequestPath", "RequestMethod"})
-)
 
 type parser func(line string) (traefikJSONLog, error)
 

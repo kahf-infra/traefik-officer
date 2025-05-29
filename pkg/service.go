@@ -24,7 +24,7 @@ var (
 			Name: "traefik_officer_requests_total",
 			Help: "Total number of HTTP requests",
 		},
-		[]string{"method", "code", "service"},
+		[]string{"request_method", "response_code", "app"},
 	)
 
 	requestDuration = promauto.NewHistogramVec(
@@ -33,7 +33,7 @@ var (
 			Help:    "Duration of HTTP requests in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"method", "code", "service"},
+		[]string{"request_method", "response_code", "app"},
 	)
 
 	requestSize = promauto.NewHistogramVec(
@@ -42,7 +42,7 @@ var (
 			Help:    "Size of HTTP requests in bytes",
 			Buckets: prometheus.ExponentialBuckets(100, 10, 8),
 		},
-		[]string{"method", "code", "service"},
+		[]string{"request_method", "response_code", "app"},
 	)
 
 	responseSize = promauto.NewHistogramVec(
@@ -51,7 +51,7 @@ var (
 			Help:    "Size of HTTP responses in bytes",
 			Buckets: prometheus.ExponentialBuckets(100, 10, 8),
 		},
-		[]string{"method", "code", "service"},
+		[]string{"request_method", "response_code", "app"},
 	)
 
 	// New endpoint-specific metrics
@@ -60,7 +60,7 @@ var (
 			Name: "traefik_officer_endpoint_requests_total",
 			Help: "Total number of HTTP requests per endpoint",
 		},
-		[]string{"service", "endpoint", "method", "code"},
+		[]string{"app", "request_path", "request_method", "response_code"},
 	)
 
 	endpointDuration = promauto.NewHistogramVec(
@@ -69,7 +69,7 @@ var (
 			Help:    "Duration of HTTP requests per endpoint in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"service", "endpoint", "method", "code"},
+		[]string{"app", "request_path", "request_method", "response_code"},
 	)
 
 	endpointAvgLatency = promauto.NewGaugeVec(
@@ -77,7 +77,7 @@ var (
 			Name: "traefik_officer_endpoint_avg_latency_seconds",
 			Help: "Average latency per endpoint in seconds",
 		},
-		[]string{"service", "endpoint"},
+		[]string{"app", "request_path"},
 	)
 
 	endpointMaxLatency = promauto.NewGaugeVec(
@@ -85,7 +85,7 @@ var (
 			Name: "traefik_officer_endpoint_max_latency_seconds",
 			Help: "Maximum latency per endpoint in seconds",
 		},
-		[]string{"service", "endpoint"},
+		[]string{"app", "request_path"},
 	)
 
 	endpointErrorRate = promauto.NewGaugeVec(
@@ -93,7 +93,7 @@ var (
 			Name: "traefik_officer_endpoint_error_rate",
 			Help: "Error rate per endpoint (ratio of 4xx/5xx responses)",
 		},
-		[]string{"service", "endpoint"},
+		[]string{"app", "request_path"},
 	)
 
 	// Track metrics for calculating averages and error rates
