@@ -19,7 +19,6 @@ var (
 )
 
 type TraefikOfficerConfig struct {
-	IgnoredNamespaces        []string     `json:"IgnoredNamespaces"`
 	IgnoredRouters           []string     `json:"IgnoredRouters"`
 	IgnoredPathsRegex        []string     `json:"IgnoredPathsRegex"`
 	MergePathsWithExtensions []string     `json:"MergePathsWithExtensions"`
@@ -75,10 +74,6 @@ func LoadConfig(configLocation string) (TraefikOfficerConfig, error) {
 		return config, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Initialize slices if they are nil to prevent nil pointer dereferences
-	if config.IgnoredNamespaces == nil {
-		config.IgnoredNamespaces = []string{}
-	}
 	if config.IgnoredRouters == nil {
 		config.IgnoredRouters = []string{}
 	}
@@ -95,6 +90,7 @@ func LoadConfig(configLocation string) (TraefikOfficerConfig, error) {
 	if config.TopNPaths == 0 {
 		config.TopNPaths = 20
 	}
+	logger.Debugf("TopNPaths: %d", config.TopNPaths)
 
 	// Compile regex patterns
 	for i := range config.URLPatterns {
@@ -121,24 +117,4 @@ type LogLine struct {
 	Text string
 	Time time.Time
 	Err  error
-}
-
-// createLogSource creates the appropriate log source based on configuration
-func createLogSource(useK8s bool, logFileConfig *LogFileConfig, k8sConfig *K8SConfig) (LogSource, error) {
-	if useK8s {
-		logger.Info("Creating Kubernetes log source with label selector:", k8sConfig.LabelSelector)
-
-		kls, err := NewKubernetesLogSource(k8sConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Kubernetes log source: %v", err)
-		}
-		err = kls.startStreaming()
-		if err != nil {
-			return nil, fmt.Errorf("failed to start Kubernetes log streaming: %v", err)
-		}
-		return kls, nil
-	} else {
-		logger.Info("Creating file log source")
-		return NewFileLogSource(logFileConfig)
-	}
 }

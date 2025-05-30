@@ -4,12 +4,13 @@ root = "."
 cmd = "go build -buildvcs=false -o /tmp/traefikofficer ./pkg"
 bin = "/tmp/traefikofficer"
 args_bin = [
-    "--config-file=/config/traefik_officer.json",
+    "--config-file=/app/test/config.json",
+    "--json-logs=false",
     "--debug",
     "--use-k8s=true",
     "--kubeconfig=/root/.kube/config",
-    "--kube-context=kahf-infra-non-production-k8s-cluster",
-    "--namespace=ingress-controller",
+    "--kube-context=hikmah-production-k8s-cluster",
+    "--namespace=kube-system",
     "--container-name=traefik",
     "--listen-port=9090",
     "--pod-label-selector=app.kubernetes.io/name=traefik"

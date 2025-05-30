@@ -214,7 +214,7 @@ func parseLine(line string) (traefikLogConfig, error) {
 		parseErr = errors.New("invalid request count")
 	}
 
-	log.RouterName = strings.Trim(submatch[12], "\"")
+	log.RouterName = extractServiceName(strings.Trim(submatch[12], "\""))
 
 	// Parse duration
 	latencyStr := strings.Trim(submatch[14], "ms")
@@ -225,9 +225,9 @@ func parseLine(line string) (traefikLogConfig, error) {
 		parseErr = errors.New("invalid duration")
 	}
 
-	if logger.GetLevel() >= logger.DebugLevel {
-		logger.Debugf("Parsed access log: %+v", log)
-	}
+	//if logger.GetLevel() >= logger.DebugLevel {
+	//	logger.Debugf("Parsed access log: %+v", log)
+	//}
 
 	return log, parseErr
 }
@@ -350,6 +350,7 @@ func contains(slice []string, item string) bool {
 }
 
 func updateTopPaths() {
+	logger.Debug("******** Updating top paths... ***********")
 	type pathStat struct {
 		service    string
 		path       string

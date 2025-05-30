@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "flag"
+	"fmt"
 	logger "github.com/sirupsen/logrus"
 	_ "time"
 )
@@ -54,7 +55,7 @@ func processLogs(logSource LogSource, config TraefikOfficerConfig, useK8sPtr *bo
 			}
 		}
 
-		logger.Debugf("Read Line: %s", logLine.Text)
+		//logger.Debugf("Read Line: %s", logLine.Text)
 		d, err := parse(logLine.Text)
 		if err != nil {
 			// Skip lines that couldn't be parsed (already logged in parseLine)
@@ -67,10 +68,12 @@ func processLogs(logSource LogSource, config TraefikOfficerConfig, useK8sPtr *bo
 		}
 
 		// Check if this service should be ignored
-		if !contains(config.AllowedServices, extractServiceName(d.RouterName)) {
-			logger.Debugf("Ignoring service: %s, not in allowed list", d.RouterName)
+		if !contains(config.AllowedServices, d.RouterName) {
+			logger.Debugf("Ignoring service: %s, not in allowed list %s", d.RouterName, config.AllowedServices)
 			continue
 		}
+
+		logger.Debugf("Found Matching service: %s, in allowed list", d.RouterName)
 
 		updateMetrics(&d, config.URLPatterns)
 
@@ -78,5 +81,25 @@ func processLogs(logSource LogSource, config TraefikOfficerConfig, useK8sPtr *bo
 		if *jsonLogsPtr {
 			traefikOverhead.Observe(d.Overhead)
 		}
+	}
+}
+
+// createLogSource creates the appropriate log source based on configuration
+func createLogSource(useK8s bool, logFileConfig *LogFileConfig, k8sConfig *K8SConfig) (LogSource, error) {
+	if useK8s {
+		logger.Info("Creating Kubernetes log source with label selector:", k8sConfig.LabelSelector)
+
+		kls, err := NewKubernetesLogSource(k8sConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Kubernetes log source: %v", err)
+		}
+		err = kls.startStreaming()
+		if err != nil {
+			return nil, fmt.Errorf("failed to start Kubernetes log streaming: %v", err)
+		}
+		return kls, nil
+	} else {
+		logger.Info("Creating file log source")
+		return NewFileLogSource(logFileConfig)
 	}
 }

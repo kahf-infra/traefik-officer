@@ -11,32 +11,28 @@ import (
 var EstBytesPerLine = 150
 
 func main() {
-	debugLogPtr := flag.Bool("debug", false, "Enable debug logging. False by default.")
-	requestArgsPtr := flag.Bool("include-query-args", false,
-		"Set this if you wish for the query arguments to be displayed in the 'RequestPath' in latency metrics. Default: false")
-	configLocationPtr := flag.String("config-file", "", "Path to the config file.")
-	servePortPtr := flag.String("listen-port", "8080", "Which port to expose metrics on")
-	jsonLogsPtr := flag.Bool("json-logs", false,
-		"If true, parse JSON logs instead of accessLog format")
-	// New Kubernetes flags
-	useK8sPtr := flag.Bool("use-k8s", false, "Read logs from Kubernetes pods instead of file")
+	debugLog := flag.Bool("debug", false, "Enable debug logging. False by default.")
+	configLocation := flag.String("config-file", "", "Path to the config file.")
+	servePort := flag.String("listen-port", "8080", "Which port to expose metrics on")
+	jsonLogs := flag.Bool("json-logs", false, "If true, parse JSON logs instead of accessLog format")
+	useK8s := flag.Bool("use-k8s", false, "Read logs from Kubernetes pods instead of file")
 	logFileConfig := AddFileFlags(flag.CommandLine)
 	k8sConfig := AddKubernetesFlags(flag.CommandLine)
 
 	flag.Parse()
 
+	if *debugLog {
+		logger.SetLevel(logger.DebugLevel)
+	}
+
 	// Load configuration
-	config, err := LoadConfig(*configLocationPtr)
+	config, err := LoadConfig(*configLocation)
 	if err != nil {
 		logger.Warnf("Failed to load configuration: %v. Using default configuration.", err)
 	}
 
-	if *debugLogPtr {
-		logger.SetLevel(logger.DebugLevel)
-	}
-
 	// Log configuration
-	if *useK8sPtr {
+	if *useK8s {
 		logger.Infof("Kubernetes Mode - "+
 			"Namespace: %s, "+
 			"Container: %s, "+
@@ -46,9 +42,8 @@ func main() {
 		logger.Info("File Mode - Access Logs At:", logFileConfig.FileLocation)
 	}
 
-	logger.Info("Config File At:", *configLocationPtr)
-	logger.Info("Display Query Args In Metrics: ", *requestArgsPtr)
-	logger.Info("JSON Logs:", *jsonLogsPtr)
+	logger.Info("Config File At:", *configLocation)
+	logger.Info("JSON Logs:", *jsonLogs)
 
 	// Start background task to update top paths
 	go func() {
@@ -60,13 +55,13 @@ func main() {
 
 	// Start metrics server
 	go func() {
-		if err := serveProm(*servePortPtr); err != nil {
+		if err := serveProm(*servePort); err != nil {
 			logger.Errorf("Metrics server error: %v", err)
 		}
 	}()
 
 	// Create log source
-	logSource, err := createLogSource(*useK8sPtr, logFileConfig, k8sConfig)
+	logSource, err := createLogSource(*useK8s, logFileConfig, k8sConfig)
 	if err != nil {
 		UpdateHealthStatus("log_source", "error", err)
 		logger.Error("Failed to create log source:", err)
@@ -85,5 +80,5 @@ func main() {
 
 	// Start log processing
 	logger.Info("Starting log processing")
-	processLogs(logSource, config, useK8sPtr, logFileConfig, jsonLogsPtr)
+	processLogs(logSource, config, useK8s, logFileConfig, jsonLogs)
 }

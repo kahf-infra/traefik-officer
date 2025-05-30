@@ -176,11 +176,6 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 	isTopPath := topPathsPerService[service][key]
 	topPathsMutex.RUnlock()
 
-	if !isTopPath && stat.TotalRequests > 10 { // Only check for top paths after some requests
-		updateTopPaths()
-		return
-	}
-
 	if isTopPath {
 		avgLatency := stat.TotalDuration / float64(stat.TotalRequests)
 		errorRate := float64(stat.ErrorCount) / float64(stat.TotalRequests)

@@ -1,4 +1,5 @@
 {
+    "TopNPaths": 10,
     "IgnoredNamespaces": [
         "/^-$/",
         "test"
@@ -17,14 +18,15 @@
         "/api",
         "/test"
     ],
-    "WhitelistPaths": [
-        "/api/v2/"
-    ],
     "URLPatterns": [
         {
             "service_name": "jsonapi",
             "pattern": "^/api/v1/products/([a-zA-Z0-9\\-]+)$",
             "name": "/api/v1/products/{name}"
         }
+    ],
+    "AllowedServices": [
+        "hikmah-api",
+        "mahfil-api"
     ]
 }
