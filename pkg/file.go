@@ -1,6 +1,14 @@
 package main
 
-import "github.com/hpcloud/tail"
+import (
+	"flag"
+	"github.com/hpcloud/tail"
+)
+
+type LogFileConfig struct {
+	FileLocation string
+	MaxFileBytes int
+}
 
 // FileLogSource reads from file using tail
 type FileLogSource struct {
@@ -10,7 +18,7 @@ type FileLogSource struct {
 }
 
 // NewFileLogSource creates a new file-based log source
-func NewFileLogSource(filename string) (*FileLogSource, error) {
+func NewFileLogSource(logFileConfig *LogFileConfig) (*FileLogSource, error) {
 	tCfg := tail.Config{
 		Follow:    true,
 		ReOpen:    true,
@@ -18,14 +26,14 @@ func NewFileLogSource(filename string) (*FileLogSource, error) {
 		Poll:      true,
 	}
 
-	t, err := tail.TailFile(filename, tCfg)
+	t, err := tail.TailFile(logFileConfig.FileLocation, tCfg)
 	if err != nil {
 		return nil, err
 	}
 
 	fls := &FileLogSource{
 		tail:     t,
-		filename: filename,
+		filename: logFileConfig.FileLocation,
 		lines:    make(chan LogLine, 100),
 	}
 
@@ -53,4 +61,13 @@ func (fls *FileLogSource) Close() error {
 		return fls.tail.Stop()
 	}
 	return nil
+}
+
+func AddFileFlags(flags *flag.FlagSet) *LogFileConfig {
+	config := &LogFileConfig{}
+
+	flags.StringVar(&config.FileLocation, "log-file", "./accessLog.txt", "The traefik access log file. Default: ./accessLog.txt")
+	flags.IntVar(&config.MaxFileBytes, "max-accesslog-size", 10,
+		"How many megabytes should we allow the accesslog to grow to before rotating")
+	return config
 }

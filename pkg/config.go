@@ -124,11 +124,11 @@ type LogLine struct {
 }
 
 // createLogSource creates the appropriate log source based on configuration
-func createLogSource(useK8s bool, filename, containerName, labelSelector string, k8sConfig *K8SConfig) (LogSource, error) {
+func createLogSource(useK8s bool, logFileConfig *LogFileConfig, k8sConfig *K8SConfig) (LogSource, error) {
 	if useK8s {
-		logger.Info("Creating Kubernetes log source with label selector:", labelSelector)
+		logger.Info("Creating Kubernetes log source with label selector:", k8sConfig.LabelSelector)
 
-		kls, err := NewKubernetesLogSource(k8sConfig, containerName, labelSelector)
+		kls, err := NewKubernetesLogSource(k8sConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Kubernetes log source: %v", err)
 		}
@@ -139,6 +139,6 @@ func createLogSource(useK8s bool, filename, containerName, labelSelector string,
 		return kls, nil
 	} else {
 		logger.Info("Creating file log source")
-		return NewFileLogSource(filename)
+		return NewFileLogSource(logFileConfig)
 	}
 }

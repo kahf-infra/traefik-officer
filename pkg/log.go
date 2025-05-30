@@ -6,7 +6,32 @@ import (
 	_ "time"
 )
 
-func processLogs(logSource LogSource, parse parser, config TraefikOfficerConfig, useK8sPtr *bool, fileNamePtr *string, linesToRotate int, jsonLogsPtr *bool) {
+type parser func(line string) (traefikLogConfig, error)
+
+func processLogs(logSource LogSource, config TraefikOfficerConfig, useK8sPtr *bool, logFileConfig *LogFileConfig, jsonLogsPtr *bool) {
+	// Only set up log rotation for file mode
+	var linesToRotate int
+	if !*useK8sPtr {
+		if logFileConfig.MaxFileBytes <= 0 {
+			logFileConfig.MaxFileBytes = 10 // Default to 10MB if invalid value provided
+			logger.Warnf("Invalid max-accesslog-size %d, using default: 10MB", logFileConfig.MaxFileBytes)
+		}
+
+		linesToRotate = (1000000 * logFileConfig.MaxFileBytes) / EstBytesPerLine
+		if linesToRotate <= 0 {
+			linesToRotate = 1000 // Ensure we have a reasonable minimum
+		}
+		logger.Infof("Rotating logs every %d lines (approximately %dMB)", linesToRotate, logFileConfig.MaxFileBytes)
+	}
+
+	// Set up parser
+	var parse parser
+	if *jsonLogsPtr {
+		logger.Info("Setting parser to JSON")
+		parse = parseJSON
+	} else {
+		parse = parseLine
+	}
 	// Main processing loop
 	i := 0
 	for logLine := range logSource.ReadLines() {
@@ -23,7 +48,7 @@ func processLogs(logSource LogSource, parse parser, config TraefikOfficerConfig,
 			i++
 			if i >= linesToRotate {
 				i = 0
-				if err := logRotate(*fileNamePtr); err != nil {
+				if err := logRotate(logFileConfig.FileLocation); err != nil {
 					logger.Errorf("Error rotating log file: %v", err)
 				}
 			}

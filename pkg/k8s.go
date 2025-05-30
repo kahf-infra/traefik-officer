@@ -61,6 +61,7 @@ type K8SConfig struct {
 	KubeConfig    string
 	Context       string
 	Namespace     string
+	ContainerName string
 	LabelSelector string
 }
 
@@ -109,7 +110,7 @@ func NewKubernetesClientset(config K8SConfig) (*kubernetes.Clientset, error) {
 }
 
 // NewKubernetesLogSource creates a new Kubernetes-based log source
-func NewKubernetesLogSource(k8sConfig *K8SConfig, containerName, labelSelector string) (*KubernetesLogSource, error) {
+func NewKubernetesLogSource(k8sConfig *K8SConfig) (*KubernetesLogSource, error) {
 	clientSet, err := NewKubernetesClientset(*k8sConfig)
 	if err != nil {
 		log.Fatalf("Error creating Kubernetes client: %v", err)
@@ -118,8 +119,8 @@ func NewKubernetesLogSource(k8sConfig *K8SConfig, containerName, labelSelector s
 	return &KubernetesLogSource{
 		clientSet:     clientSet,
 		namespace:     k8sConfig.Namespace,
-		containerName: containerName,
-		labelSelector: labelSelector,
+		containerName: k8sConfig.ContainerName,
+		labelSelector: k8sConfig.LabelSelector,
 		lines:         make(chan LogLine, 1000),
 		podStreams:    make(map[string]*podStream),
 		stopCh:        make(chan struct{}),
@@ -420,8 +421,10 @@ func AddKubernetesFlags(flags *flag.FlagSet) *K8SConfig {
 		"Kubernetes context to use (default is current context)")
 	flags.StringVar(&config.Namespace, "namespace", "ingress-controller",
 		"Kubernetes namespace to monitor")
-	flags.StringVar(&config.LabelSelector, "label-selector", "",
+	flags.StringVar(&config.LabelSelector, "pod-label-selector", "app.kubernetes.io/name=traefik",
 		"Label selector for pods (e.g., 'app=myapp')")
+	flags.StringVar(&config.ContainerName, "container-name", "traefik",
+		"Container name in the pods")
 
 	return config
 }
