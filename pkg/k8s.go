@@ -3,7 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"flag"
 	"fmt"
+	"k8s.io/client-go/tools/clientcmd"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -50,23 +55,69 @@ type KubernetesLogSource struct {
 	wg     sync.WaitGroup
 }
 
-// NewKubernetesLogSource creates a new Kubernetes-based log source
-func NewKubernetesLogSource(namespace, containerName, labelSelector string) (*KubernetesLogSource, error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		// Fallback to kubeconfig if not in cluster
-		logger.Info("Not in cluster, trying kubeconfig...")
-		return nil, fmt.Errorf("kubernetes config error: %v", err)
+// K8SConfig holds the Kubernetes configuration options
+type K8SConfig struct {
+	InCluster     bool
+	KubeConfig    string
+	Context       string
+	Namespace     string
+	LabelSelector string
+}
+
+// NewKubernetesConfig creates a new Kubernetes client configuration
+func NewKubernetesConfig(config K8SConfig) (*rest.Config, error) {
+	var kubeconfig *string
+	if config.KubeConfig != "" {
+		kubeconfig = &config.KubeConfig
+	} else if home := homeDir(); home != "" {
+		if _, err := os.Stat(filepath.Join(home, ".kube", "config")); err == nil {
+			defaultKubeConfig := filepath.Join(home, ".kube", "config")
+			kubeconfig = &defaultKubeConfig
+		}
 	}
 
-	clientSet, err := kubernetes.NewForConfig(config)
+	// If in-cluster is explicitly set or we're running in a pod
+	if config.InCluster || (kubeconfig == nil && os.Getenv("KUBERNETES_SERVICE_HOST") != "") {
+		return rest.InClusterConfig()
+	}
+
+	// Use the current context in kubeconfig
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != nil {
+		loadingRules.ExplicitPath = *kubeconfig
+	}
+
+	configOverrides := &clientcmd.ConfigOverrides{}
+	if config.Context != "" {
+		configOverrides.CurrentContext = config.Context
+	}
+
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		configOverrides,
+	).ClientConfig()
+}
+
+// NewKubernetesClientset creates a new Kubernetes clientset
+func NewKubernetesClientset(config K8SConfig) (*kubernetes.Clientset, error) {
+	kubeConfig, err := NewKubernetesConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("kubernetes client error: %v", err)
+		return nil, err
+	}
+
+	return kubernetes.NewForConfig(kubeConfig)
+}
+
+// NewKubernetesLogSource creates a new Kubernetes-based log source
+func NewKubernetesLogSource(k8sConfig *K8SConfig, containerName, labelSelector string) (*KubernetesLogSource, error) {
+	clientSet, err := NewKubernetesClientset(*k8sConfig)
+	if err != nil {
+		log.Fatalf("Error creating Kubernetes client: %v", err)
 	}
 
 	return &KubernetesLogSource{
 		clientSet:     clientSet,
-		namespace:     namespace,
+		namespace:     k8sConfig.Namespace,
 		containerName: containerName,
 		labelSelector: labelSelector,
 		lines:         make(chan LogLine, 1000),
@@ -355,4 +406,22 @@ func (kls *KubernetesLogSource) Close() error {
 	// Wait for all goroutines to finish
 	kls.wg.Wait()
 	return nil
+}
+
+// AddKubernetesFlags adds Kubernetes-related command line flags
+func AddKubernetesFlags(flags *flag.FlagSet) *K8SConfig {
+	config := &K8SConfig{}
+
+	flags.BoolVar(&config.InCluster, "in-cluster", false,
+		"Use in-cluster Kubernetes configuration")
+	flags.StringVar(&config.KubeConfig, "kubeconfig", "",
+		"Path to kubeconfig file (default is $HOME/.kube/config)")
+	flags.StringVar(&config.Context, "kube-context", "",
+		"Kubernetes context to use (default is current context)")
+	flags.StringVar(&config.Namespace, "namespace", "ingress-controller",
+		"Kubernetes namespace to monitor")
+	flags.StringVar(&config.LabelSelector, "label-selector", "",
+		"Label selector for pods (e.g., 'app=myapp')")
+
+	return config
 }

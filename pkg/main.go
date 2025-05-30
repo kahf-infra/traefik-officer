@@ -2,15 +2,15 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	logger "github.com/sirupsen/logrus"
 	"os"
+	"time"
 )
 
 // EstBytesPerLine Estimated number of bytes per line - for log rotation
 var EstBytesPerLine = 150
 
-type parser func(line string) (traefikJSONLog, error)
+type parser func(line string) (traefikLogConfig, error)
 
 func main() {
 	debugLogPtr := flag.Bool("debug", false, "Enable debug logging. False by default.")
@@ -21,20 +21,22 @@ func main() {
 	servePortPtr := flag.String("listen-port", "8080", "Which port to expose metrics on")
 	maxFileBytesPtr := flag.Int("max-accesslog-size", 10,
 		"How many megabytes should we allow the accesslog to grow to before rotating")
-	strictWhiteListPtr := flag.Bool("strict-whitelist", false,
-		"If true, ONLY patterns matching the whitelist will be counted. If false, patterns whitelisted just skip ignore rules")
 	jsonLogsPtr := flag.Bool("json-logs", false,
 		"If true, parse JSON logs instead of accessLog format")
-	passLogAboveThresholdPtr := flag.Float64("pass-log-above-threshold", 1,
-		"Passthrough traefik accessLog line to stdout if request takes longer that X seconds. Only whitelisted request paths.")
 
 	// New Kubernetes flags
 	useK8sPtr := flag.Bool("use-k8s", false, "Read logs from Kubernetes pods instead of file")
 	podLabelSelectorPtr := flag.String("pod-label-selector", "app.kubernetes.io/name=traefik", "Kubernetes pod label selector (e.g., 'app=traefik')")
-	namespacePtr := flag.String("namespace", "ingress-controller", "Kubernetes namespace")
 	containerNamePtr := flag.String("container-name", "traefik", "Container name in the pods")
+	k8sConfig := AddKubernetesFlags(flag.CommandLine)
 
 	flag.Parse()
+
+	// Load configuration
+	config, err := LoadConfig(*configLocationPtr)
+	if err != nil {
+		logger.Warnf("Failed to load configuration: %v. Using default configuration.", err)
+	}
 
 	if *debugLogPtr {
 		logger.SetLevel(logger.DebugLevel)
@@ -42,8 +44,8 @@ func main() {
 
 	// Log configuration
 	if *useK8sPtr {
-		logger.Infof("Kubernetes Mode - Namespace: %s, Container: %s, Label Selector: %s",
-			*namespacePtr, *containerNamePtr, *podLabelSelectorPtr)
+		logger.Infof("Kubernetes Mode - Container: %s, Label Selector: %s",
+			*containerNamePtr, *podLabelSelectorPtr)
 	} else {
 		logger.Info("File Mode - Access Logs At:", *fileNamePtr)
 	}
@@ -52,11 +54,13 @@ func main() {
 	logger.Info("Display Query Args In Metrics: ", *requestArgsPtr)
 	logger.Info("JSON Logs:", *jsonLogsPtr)
 
-	// Load configuration
-	config, err := loadConfig(*configLocationPtr)
-	if err != nil {
-		logger.Warnf("Failed to load configuration: %v. Using default configuration.", err)
-	}
+	// Start background task to update top paths
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		for range ticker.C {
+			updateTopPaths()
+		}
+	}()
 
 	// Start metrics server
 	go func() {
@@ -80,12 +84,8 @@ func main() {
 		logger.Infof("Rotating logs every %d lines (approximately %dMB)", linesToRotate, *maxFileBytesPtr)
 	}
 
-	fmt.Printf("Ignoring Namespaces: %s \nIgnoring Routers: %s\n Ignoring Paths: %s \n Merging Paths: %s\n Whitelist: %s\n",
-		config.IgnoredNamespaces, config.IgnoredRouters, config.IgnoredPathsRegex, config.MergePathsWithExtensions,
-		config.WhitelistPaths)
-
 	// Create log source
-	logSource, err := createLogSource(*useK8sPtr, *fileNamePtr, *namespacePtr, *containerNamePtr, *podLabelSelectorPtr)
+	logSource, err := createLogSource(*useK8sPtr, *fileNamePtr, *containerNamePtr, *podLabelSelectorPtr, k8sConfig)
 	if err != nil {
 		UpdateHealthStatus("log_source", "error", err)
 		logger.Error("Failed to create log source:", err)
@@ -109,14 +109,9 @@ func main() {
 		parse = parseLine
 	}
 
-	whiteListChecker := checkWhiteList
-	if *strictWhiteListPtr {
-		whiteListChecker = checkWhiteListStrict
-	}
-
 	logger.Info("Starting log processing")
 	UpdateHealthStatus("log_processor", "running", nil)
 
 	// Start log processing
-	processLogs(logSource, parse, whiteListChecker, config, useK8sPtr, fileNamePtr, linesToRotate, requestArgsPtr, strictWhiteListPtr, passLogAboveThresholdPtr, jsonLogsPtr)
+	processLogs(logSource, parse, config, useK8sPtr, fileNamePtr, linesToRotate, jsonLogsPtr)
 }

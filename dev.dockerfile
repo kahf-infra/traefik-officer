@@ -1,5 +1,5 @@
 # Use the latest Go 1.22 image (or upgrade to 1.23 if needed)
-FROM golang:1.22-alpine
+FROM golang:1.24.1-alpine
 
 WORKDIR /app
 
@@ -19,14 +19,7 @@ RUN curl -sSfL https://raw.githubusercontent.com/cosmtrek/air/master/install.sh 
 COPY go.mod go.sum ./
 
 # Download Go modules with specific versions
-RUN go mod download -x && \
-    go get golang.org/x/sys@v0.17.0 && \
-    go get gopkg.in/fsnotify.v1@v1.4.7 && \
-    go get gopkg.in/tomb.v1@v1.0.0-20141024135613-dd632973f1e7
-
-# Create and use non-root user
-RUN adduser -D devuser && chown -R devuser /app
-USER devuser
+RUN go mod download
 
 EXPOSE 8080
 ENTRYPOINT ["air"]

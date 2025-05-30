@@ -7,20 +7,29 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sync"
 	"time"
 )
 
-type traefikOfficerConfig struct {
+var (
+	// ... existing variables ...
+	topNPaths          int
+	topPathsMutex      sync.RWMutex
+	topPathsPerService = make(map[string]map[string]bool) // Tracks which paths are in the top N
+)
+
+type TraefikOfficerConfig struct {
 	IgnoredNamespaces        []string     `json:"IgnoredNamespaces"`
 	IgnoredRouters           []string     `json:"IgnoredRouters"`
 	IgnoredPathsRegex        []string     `json:"IgnoredPathsRegex"`
 	MergePathsWithExtensions []string     `json:"MergePathsWithExtensions"`
-	WhitelistPaths           []string     `json:"WhitelistPaths"`
 	URLPatterns              []URLPattern `json:"URLPatterns"`
 	AllowedServices          []string     `json:"AllowedServices"`
+	TopNPaths                int          `json:"TopNPaths"`
+	Debug                    bool         `json:"Debug"`
 }
 
-type traefikJSONLog struct {
+type traefikLogConfig struct {
 	ClientHost        string  `json:"ClientHost"`
 	StartUTC          string  `json:"StartUTC"`
 	RouterName        string  `json:"RouterName"`
@@ -34,8 +43,8 @@ type traefikJSONLog struct {
 	Overhead          float64 `json:"Overhead"`
 }
 
-func loadConfig(configLocation string) (traefikOfficerConfig, error) {
-	var config traefikOfficerConfig
+func LoadConfig(configLocation string) (TraefikOfficerConfig, error) {
+	var config TraefikOfficerConfig
 
 	if configLocation == "" {
 		logger.Warn("No config file specified, using default configuration")
@@ -79,11 +88,12 @@ func loadConfig(configLocation string) (traefikOfficerConfig, error) {
 	if config.MergePathsWithExtensions == nil {
 		config.MergePathsWithExtensions = []string{}
 	}
-	if config.WhitelistPaths == nil {
-		config.WhitelistPaths = []string{}
-	}
 	if config.URLPatterns == nil {
 		config.URLPatterns = []URLPattern{}
+	}
+
+	if config.TopNPaths == 0 {
+		config.TopNPaths = 20
 	}
 
 	// Compile regex patterns
@@ -95,6 +105,8 @@ func loadConfig(configLocation string) (traefikOfficerConfig, error) {
 		}
 		config.URLPatterns[i].Regex = regex
 	}
+
+	topNPaths = config.TopNPaths
 
 	return config, nil
 }
@@ -112,10 +124,11 @@ type LogLine struct {
 }
 
 // createLogSource creates the appropriate log source based on configuration
-func createLogSource(useK8s bool, filename, namespace, containerName, labelSelector string) (LogSource, error) {
+func createLogSource(useK8s bool, filename, containerName, labelSelector string, k8sConfig *K8SConfig) (LogSource, error) {
 	if useK8s {
 		logger.Info("Creating Kubernetes log source with label selector:", labelSelector)
-		kls, err := NewKubernetesLogSource(namespace, containerName, labelSelector)
+
+		kls, err := NewKubernetesLogSource(k8sConfig, containerName, labelSelector)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Kubernetes log source: %v", err)
 		}

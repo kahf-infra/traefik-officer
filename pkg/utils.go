@@ -10,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func checkWhiteListStrict(str string, matchStrings []string) bool {
@@ -63,19 +65,19 @@ func checkMatches(str string, matchExpressions []string) bool {
 	return false
 }
 
-func parseJSON(line string) (traefikJSONLog, error) {
+func parseJSON(line string) (traefikLogConfig, error) {
 	var err error
-	var jsonLog traefikJSONLog
+	var jsonLog traefikLogConfig
 
 	if !json.Valid([]byte(line)) {
 		err := fmt.Errorf("invalid JSON format in log line: %s", line)
 		logger.Error(err)
-		return traefikJSONLog{}, err
+		return traefikLogConfig{}, err
 	}
 
 	if err := json.Unmarshal([]byte(line), &jsonLog); err != nil {
 		logger.Errorf("Failed to unmarshal JSON log: %v", err)
-		return traefikJSONLog{}, fmt.Errorf("failed to unmarshal JSON log: %w", err)
+		return traefikLogConfig{}, fmt.Errorf("failed to unmarshal JSON log: %w", err)
 	}
 
 	jsonLog.Duration = jsonLog.Duration / 1000000 // JSON Logs format latency in nanoseconds, convert to ms
@@ -135,17 +137,17 @@ func isAccessLogLine(line string) bool {
 	return false
 }
 
-func parseLine(line string) (traefikJSONLog, error) {
+func parseLine(line string) (traefikLogConfig, error) {
 	// Skip empty lines
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return traefikJSONLog{}, errors.New("empty line")
+		return traefikLogConfig{}, errors.New("empty line")
 	}
 
 	// Quick check if this looks like an access log line
 	if !isAccessLogLine(line) {
 		logger.Debugf("Skipping non-access log line: %s", line)
-		return traefikJSONLog{}, errors.New("not an access log line")
+		return traefikLogConfig{}, errors.New("not an access log line")
 	}
 
 	var buffer bytes.Buffer
@@ -169,16 +171,16 @@ func parseLine(line string) (traefikJSONLog, error) {
 	if err != nil {
 		err = fmt.Errorf("failed to compile regex: %w", err)
 		logger.Error(err)
-		return traefikJSONLog{}, err
+		return traefikLogConfig{}, err
 	}
 
 	submatch := regex.FindStringSubmatch(line)
 	if len(submatch) <= 13 {
 		logger.Debugf("Line doesn't match access log format (matched %d parts): %s", len(submatch), line)
-		return traefikJSONLog{}, errors.New("invalid access log format")
+		return traefikLogConfig{}, errors.New("invalid access log format")
 	}
 
-	var log traefikJSONLog
+	var log traefikLogConfig
 	var parseErr error
 
 	// Safely extract fields with error handling
@@ -345,4 +347,160 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func updateTopPaths() {
+	type pathStat struct {
+		service    string
+		path       string
+		avgLatency float64
+	}
+
+	// Group paths by service
+	servicePaths := make(map[string][]pathStat)
+
+	// Get all paths and their stats
+	for key, stat := range endpointStats {
+		if stat.TotalRequests > 0 {
+			// Split the key into service and path
+			parts := strings.SplitN(key, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			service, path := parts[0], parts[1]
+
+			// Add to service's path list
+			servicePaths[service] = append(servicePaths[service], pathStat{
+				service:    service,
+				path:       path,
+				avgLatency: stat.TotalDuration / float64(stat.TotalRequests),
+			})
+		}
+	}
+
+	topPathsMutex.Lock()
+	defer topPathsMutex.Unlock()
+
+	// Clear current top paths
+	topPathsPerService = make(map[string]map[string]bool)
+
+	// For each service, find its top N paths
+	for service, paths := range servicePaths {
+		// Sort paths by average latency (highest first)
+		sort.Slice(paths, func(i, j int) bool {
+			return paths[i].avgLatency > paths[j].avgLatency
+		})
+
+		// Take top N paths for this service
+		limit := topNPaths
+		if limit > len(paths) {
+			limit = len(paths)
+		}
+
+		// Initialize service map if not exists
+		if _, exists := topPathsPerService[service]; !exists {
+			topPathsPerService[service] = make(map[string]bool)
+		}
+
+		// Add top paths for this service
+		for i := 0; i < limit; i++ {
+			pathKey := fmt.Sprintf("%s:%s", service, paths[i].path)
+			topPathsPerService[service][pathKey] = true
+		}
+	}
+}
+
+func startTopPathsUpdater(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for range ticker.C {
+			updateTopPaths()
+		}
+	}()
+}
+
+func extractServiceName(routerName string) string {
+	// Remove anything after @ character (including the @ itself)
+	if idx := strings.Index(routerName, "@"); idx != -1 {
+		routerName = routerName[:idx]
+	}
+
+	// Split by dash and try to find a meaningful service name
+	parts := strings.Split(routerName, "-")
+	if len(parts) >= 3 {
+		// Try to identify a service pattern: namespace-service-name-type-protocol-hash
+		for i := 0; i < len(parts)-2; i++ {
+			if parts[i+1] == "api" || parts[i+1] == "web" || parts[i+1] == "service" {
+				if i > 0 {
+					return fmt.Sprintf("%s-%s", parts[i], parts[i+1])
+				}
+				return parts[i+1]
+			}
+		}
+
+		// Fallback: use first 2-3 parts
+		if len(parts) >= 4 {
+			return strings.Join(parts[:3], "-")
+		} else {
+			return strings.Join(parts[:2], "-")
+		}
+	}
+
+	// If parsing fails, return the first part or original
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return routerName
+}
+
+// normalizeURL applies URL patterns to normalize endpoints
+func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
+	// First, try service-specific patterns
+	for _, pattern := range urlPatterns {
+		if pattern.ServiceName == serviceName && pattern.Regex != nil {
+			if pattern.Regex.MatchString(path) {
+				match := regexp.MustCompile(pattern.Regex.String())
+				return match.ReplaceAllString(path, pattern.Replacement)
+			}
+		}
+	}
+
+	// Then try generic patterns (empty service name)
+	for _, pattern := range urlPatterns {
+		if pattern.ServiceName == "" && pattern.Regex != nil {
+			if pattern.Regex.MatchString(path) {
+				match := regexp.MustCompile(pattern.Regex.String())
+				return match.ReplaceAllString(path, pattern.Replacement)
+			}
+		}
+	}
+
+	// Default normalization - replace IDs and UUIDs
+	normalized := path
+
+	// Replace numeric IDs
+	re1 := regexp.MustCompile(`/\d+(/|$|\?)`)
+	normalized = re1.ReplaceAllString(normalized, "/{id}$1")
+
+	// Replace UUIDs
+	re2 := regexp.MustCompile(`/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(/|$|\?)`)
+	normalized = re2.ReplaceAllString(normalized, "/{uuid}$1")
+
+	// Replace other common patterns (long alphanumeric strings)
+	re3 := regexp.MustCompile(`/[a-zA-Z0-9]{20,}(/|$|\?)`)
+	normalized = re3.ReplaceAllString(normalized, "/{token}$1")
+
+	// Replace query params
+	re4 := regexp.MustCompile(`\?.*`)
+	normalized = re4.ReplaceAllString(normalized, "?{query_params}")
+
+	return normalized
+}
+
+// homeDir returns the home directory for the current user
+func homeDir() string {
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	return os.Getenv("USERPROFILE") // windows
 }
