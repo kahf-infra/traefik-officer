@@ -340,9 +340,10 @@ func deleteFile(path string) error {
 }
 
 // Helper function to check if a string is in a slice
+
 func contains(slice []TraefikService, item string) bool {
 	for _, s := range slice {
-		name := fmt.Sprintf("%s-%s", s.Namespace, s.Name)
+		name := BuildServiceName(s.Namespace, s.Name, "-")
 		if name == item {
 			return true
 		}
@@ -352,7 +353,7 @@ func contains(slice []TraefikService, item string) bool {
 
 func startsWith(slice []TraefikService, item string) bool {
 	for _, s := range slice {
-		name := fmt.Sprintf("%s-%s", s.Namespace, s.Name)
+		name := BuildServiceName(s.Namespace, s.Name, "-")
 		if strings.HasPrefix(item, name) {
 			return true
 		}
@@ -480,7 +481,7 @@ func extractServiceName(routerName string) string {
 func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
 	// First, try service-specific patterns
 	for _, pattern := range urlPatterns {
-		patternServiceName := fmt.Sprintf("%s-%s", pattern.Namespace, pattern.ServiceName)
+		patternServiceName := BuildServiceName(pattern.Namespace, pattern.ServiceName, "-")
 		if patternServiceName == serviceName && pattern.Regex != nil {
 			if pattern.Regex.MatchString(path) {
 				match := regexp.MustCompile(pattern.Regex.String())
@@ -517,4 +518,21 @@ func homeDir() string {
 		return h
 	}
 	return os.Getenv("USERPROFILE") // windows
+}
+
+func BuildServiceName(namespace, name, separator string) string {
+	// Remove leading/trailing whitespace
+	str1 := strings.TrimSpace(namespace)
+	str2 := strings.TrimSpace(name)
+
+	// If either string is empty, return the non-empty one
+	if str1 == "" {
+		return str2
+	}
+	if str2 == "" {
+		return str1
+	}
+
+	// Both strings have content, join with separator
+	return str1 + separator + str2
 }
