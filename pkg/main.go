@@ -47,7 +47,7 @@ func main() {
 
 	// Start background task to update top paths
 	startTopPathsUpdater(30 * time.Second)
-	startMetricsCleaner(60 * time.Minute)
+	//startMetricsCleaner(60 * time.Minute)
 
 	// Start metrics server
 	go func() {

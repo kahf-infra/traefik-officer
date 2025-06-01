@@ -68,7 +68,7 @@ func processLogs(logSource LogSource, config TraefikOfficerConfig, useK8sPtr *bo
 		}
 
 		// Check if this service should be ignored
-		if !contains(config.AllowedServices, d.RouterName) {
+		if !startsWith(config.AllowedServices, d.RouterName) {
 			logger.Debugf("Ignoring service: %s, not in allowed list %s", d.RouterName, config.AllowedServices)
 			continue
 		}

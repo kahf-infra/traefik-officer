@@ -18,14 +18,19 @@ var (
 	topPathsPerService = make(map[string]map[string]bool) // Tracks which paths are in the top N
 )
 
+type TraefikService struct {
+	Name      string `json:"Name"`
+	Namespace string `json:"Namespace"`
+}
+
 type TraefikOfficerConfig struct {
-	IgnoredRouters           []string     `json:"IgnoredRouters"`
-	IgnoredPathsRegex        []string     `json:"IgnoredPathsRegex"`
-	MergePathsWithExtensions []string     `json:"MergePathsWithExtensions"`
-	URLPatterns              []URLPattern `json:"URLPatterns"`
-	AllowedServices          []string     `json:"AllowedServices"`
-	TopNPaths                int          `json:"TopNPaths"`
-	Debug                    bool         `json:"Debug"`
+	IgnoredRouters           []string         `json:"IgnoredRouters"`
+	IgnoredPathsRegex        []string         `json:"IgnoredPathsRegex"`
+	MergePathsWithExtensions []string         `json:"MergePathsWithExtensions"`
+	URLPatterns              []URLPattern     `json:"URLPatterns"`
+	AllowedServices          []TraefikService `json:"AllowedServices"`
+	TopNPaths                int              `json:"TopNPaths"`
+	Debug                    bool             `json:"Debug"`
 }
 
 type traefikLogConfig struct {

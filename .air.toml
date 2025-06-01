@@ -9,8 +9,8 @@ args_bin = [
     "--debug",
     "--use-k8s=true",
     "--kubeconfig=/root/.kube/config",
-    "--kube-context=hikmah-production-k8s-cluster",
-    "--namespace=kube-system",
+    "--kube-context=kahf-infra-non-production-k8s-cluster",
+    "--namespace=ingress-controller",
     "--container-name=traefik",
     "--listen-port=9090",
     "--pod-label-selector=app.kubernetes.io/name=traefik"

@@ -86,7 +86,7 @@ func parseJSON(line string) (traefikLogConfig, error) {
 	logger.Debugf("JSON Parsed: %+v", jsonLog)
 	logger.Debugf("ClientHost: %s", jsonLog.ClientHost)
 	logger.Debugf("StartUTC: %s", jsonLog.StartUTC)
-	logger.Debugf("RouterName: %s", extractServiceName(jsonLog.RouterName))
+	logger.Debugf("RouterName: %s", jsonLog.RouterName)
 	logger.Debugf("RequestMethod: %s", jsonLog.RequestMethod)
 	logger.Debugf("RequestPath: %s", jsonLog.RequestPath)
 	logger.Debugf("RequestProtocol: %s", jsonLog.RequestProtocol)
@@ -214,7 +214,7 @@ func parseLine(line string) (traefikLogConfig, error) {
 		parseErr = errors.New("invalid request count")
 	}
 
-	log.RouterName = extractServiceName(strings.Trim(submatch[12], "\""))
+	log.RouterName = strings.Trim(submatch[12], "\"")
 
 	// Parse duration
 	latencyStr := strings.Trim(submatch[14], "ms")
@@ -340,9 +340,20 @@ func deleteFile(path string) error {
 }
 
 // Helper function to check if a string is in a slice
-func contains(slice []string, item string) bool {
+func contains(slice []TraefikService, item string) bool {
 	for _, s := range slice {
-		if s == item {
+		name := fmt.Sprintf("%s-%s", s.Namespace, s.Name)
+		if name == item {
+			return true
+		}
+	}
+	return false
+}
+
+func startsWith(slice []TraefikService, item string) bool {
+	for _, s := range slice {
+		name := fmt.Sprintf("%s-%s", s.Namespace, s.Name)
+		if strings.HasPrefix(item, name) {
 			return true
 		}
 	}
@@ -469,17 +480,8 @@ func extractServiceName(routerName string) string {
 func normalizeURL(serviceName, path string, urlPatterns []URLPattern) string {
 	// First, try service-specific patterns
 	for _, pattern := range urlPatterns {
-		if pattern.ServiceName == serviceName && pattern.Regex != nil {
-			if pattern.Regex.MatchString(path) {
-				match := regexp.MustCompile(pattern.Regex.String())
-				return match.ReplaceAllString(path, pattern.Replacement)
-			}
-		}
-	}
-
-	// Then try generic patterns (empty service name)
-	for _, pattern := range urlPatterns {
-		if pattern.ServiceName == "" && pattern.Regex != nil {
+		patternServiceName := fmt.Sprintf("%s-%s", pattern.Namespace, pattern.ServiceName)
+		if patternServiceName == serviceName && pattern.Regex != nil {
 			if pattern.Regex.MatchString(path) {
 				match := regexp.MustCompile(pattern.Regex.String())
 				return match.ReplaceAllString(path, pattern.Replacement)

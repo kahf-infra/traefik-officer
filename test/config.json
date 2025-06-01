@@ -1,5 +1,4 @@
 {
-    "TopNPaths": 10,
     "IgnoredNamespaces": [
         "/^-$/",
         "test"
@@ -11,22 +10,93 @@
         "http-to-443@internal"
     ],
     "IgnoredPathsRegex": [
-        "\\/images\\/",
-        "\\/metrics\\/"
+        "^/images/(.+)$",
+        "/metrics",
+        "^/_next/(.+)$",
+        "^/build/js/(.+)$"
     ],
-    "MergePathsWithExtensions": [
-        "/api",
-        "/test"
+    "MergePathsWithExtensions": [],
+    "WhitelistPaths": [],
+    "AllowedServices": [
+        {
+            "Name": "hikmah-api",
+            "Namespace": "hikmah-dev"
+        },
+        {
+            "Name": "mahfil-api",
+            "Namespace": "mahfil-dev"
+        },
+        {
+            "Name": "ad-server-dev",
+            "Namespace": "ad-server-dev"
+        }
     ],
     "URLPatterns": [
         {
-            "service_name": "jsonapi",
-            "pattern": "^/api/v1/products/([a-zA-Z0-9\\-]+)$",
-            "name": "/api/v1/products/{name}"
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/api/post/get/(.+)$",
+            "replacement": "/api/post/get/{slug}"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/api/post/content/(.+)$",
+            "replacement": "/api/post/content/{slug}"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/api/hashtag/search/(.+)$",
+            "replacement": "/api/hashtag/search/{keyword}"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/api/hashtag/get/(.+)$",
+            "replacement": "/api/hashtag/get/{tag}"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/@(.+)$",
+            "replacement": "/@username"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/api/user/profile/(.+)$",
+            "replacement": "/api/user/profile/{name}"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^/backstage/report-moderations/(\\d+)/view$",
+            "replacement": "/backstage/report-moderations/{id}/view"
+        },
+        {
+            "namespace": "hikmah-dev",
+            "service_name": "hikmah-api",
+            "pattern": "^(/api/post/profile/)\\d+(/\\d+)$",
+            "replacement": "$${1}{id}$2"
+        },
+        {
+            "namespace": "ad-server-dev",
+            "service_name": "ad-server-dev",
+            "pattern": "^/api/v1/decision/(.+)$",
+            "replacement": "/api/v1/decision/{params}"
+        },
+        {
+            "namespace": "mahfil-dev",
+            "service_name": "mahfil-api",
+            "pattern": "^/channel/(.+)$",
+            "replacement": "/channel/{slug}"
+        },
+        {
+            "namespace": "mahfil-dev",
+            "service_name": "mahfil-api",
+            "pattern": "^/watch/(.+)$",
+            "replacement": "/watch/{slug}"
         }
-    ],
-    "AllowedServices": [
-        "hikmah-api",
-        "mahfil-api"
     ]
 }

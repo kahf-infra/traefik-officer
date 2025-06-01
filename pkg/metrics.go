@@ -15,6 +15,7 @@ type URLPattern struct {
 	Pattern     string         `json:"pattern"`
 	Replacement string         `json:"replacement"`
 	Regex       *regexp.Regexp `json:"-"`
+	Namespace   string         `json:"namespace"`
 }
 
 var (
@@ -117,7 +118,7 @@ var (
 func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 	method := entry.RequestMethod
 	code := strconv.Itoa(entry.OriginStatus)
-	service := extractServiceName(entry.RouterName)
+	service := entry.RouterName
 	duration := float64(entry.Duration) / 1000.0 // Convert to seconds
 
 	// Original metrics (keeping existing functionality)
