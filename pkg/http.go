@@ -17,7 +17,7 @@ func serveProm(port string) error {
 	addr := ":" + port
 
 	// Register handlers
-	http.Handle("/metrics", promhttp.Handler())
+	http.Handle("/metrics", http.HandlerFunc(metricsHandlerWithGaugeReset))
 	http.HandleFunc("/health", HealthHandler)
 
 	logger.Infof("Starting metrics server on %s/metrics", addr)
@@ -47,4 +47,18 @@ func serveProm(port string) error {
 		logger.Info("Metrics server started successfully")
 		return nil
 	}
+}
+
+func metricsHandlerWithGaugeReset(w http.ResponseWriter, r *http.Request) {
+	// Serve metrics
+	promhttp.Handler().ServeHTTP(w, r)
+
+	// Reset gauge values
+	endpointAvgLatency.Reset()
+	endpointMaxLatency.Reset()
+	endpointDuration.Reset()
+	endpointRequests.Reset()
+	endpointErrorRate.Reset()
+	endpointClientErrorRate.Reset()
+	endpointServerErrorRate.Reset()
 }

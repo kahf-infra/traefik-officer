@@ -149,6 +149,14 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 		} else {
 			stat.ClientErrorCount++
 		}
+		errorRate := float64(stat.ErrorCount) / float64(stat.TotalRequests)
+		endpointErrorRate.WithLabelValues(service, endpoint).Set(errorRate)
+
+		clientErrorRate := float64(stat.ClientErrorCount) / float64(stat.TotalRequests)
+		endpointClientErrorRate.WithLabelValues(service, endpoint).Set(clientErrorRate)
+
+		serverErrorRate := float64(stat.ServerErrorCount) / float64(stat.TotalRequests)
+		endpointServerErrorRate.WithLabelValues(service, endpoint).Set(serverErrorRate)
 	}
 
 	// Check if this is a top path for its service
@@ -158,14 +166,8 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 
 	if isTopPath {
 		avgLatency := stat.TotalDuration / float64(stat.TotalRequests)
-		errorRate := float64(stat.ErrorCount) / float64(stat.TotalRequests)
-		clientErrorRate := float64(stat.ClientErrorCount) / float64(stat.TotalRequests)
-		serverErrorRate := float64(stat.ServerErrorCount) / float64(stat.TotalRequests)
 		endpointAvgLatency.WithLabelValues(service, endpoint).Set(avgLatency)
 		endpointMaxLatency.WithLabelValues(service, endpoint).Set(stat.MaxDuration)
-		endpointErrorRate.WithLabelValues(service, endpoint).Set(errorRate)
-		endpointClientErrorRate.WithLabelValues(service, endpoint).Set(clientErrorRate)
-		endpointServerErrorRate.WithLabelValues(service, endpoint).Set(serverErrorRate)
 		endpointRequests.WithLabelValues(service, endpoint, method, code).Inc()
 		endpointDuration.WithLabelValues(service, endpoint, method, code).Observe(duration)
 	}
@@ -176,9 +178,6 @@ func clearAllPathMetrics() {
 	endpointAvgLatency.Reset()
 	endpointMaxLatency.Reset()
 	endpointDuration.Reset()
-	endpointClientErrorRate.Reset()
-	endpointServerErrorRate.Reset()
-	endpointErrorRate.Reset()
 	endpointRequests.Reset()
 }
 
