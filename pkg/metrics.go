@@ -144,19 +144,17 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 	isError := entry.OriginStatus >= 400
 	if isError {
 		stat.ErrorCount++
-		if entry.OriginStatus >= 500 {
-			stat.ServerErrorCount++
-		} else {
-			stat.ClientErrorCount++
-		}
 		errorRate := float64(stat.ErrorCount) / float64(stat.TotalRequests)
 		endpointErrorRate.WithLabelValues(service, endpoint).Set(errorRate)
-
-		clientErrorRate := float64(stat.ClientErrorCount) / float64(stat.TotalRequests)
-		endpointClientErrorRate.WithLabelValues(service, endpoint).Set(clientErrorRate)
-
-		serverErrorRate := float64(stat.ServerErrorCount) / float64(stat.TotalRequests)
-		endpointServerErrorRate.WithLabelValues(service, endpoint).Set(serverErrorRate)
+		if entry.OriginStatus >= 500 {
+			stat.ServerErrorCount++
+			serverErrorRate := float64(stat.ServerErrorCount) / float64(stat.TotalRequests)
+			endpointServerErrorRate.WithLabelValues(service, endpoint).Set(serverErrorRate)
+		} else {
+			stat.ClientErrorCount++
+			clientErrorRate := float64(stat.ClientErrorCount) / float64(stat.TotalRequests)
+			endpointClientErrorRate.WithLabelValues(service, endpoint).Set(clientErrorRate)
+		}
 	}
 
 	// Check if this is a top path for its service

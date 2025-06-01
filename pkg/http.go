@@ -53,11 +53,6 @@ func metricsHandlerWithGaugeReset(w http.ResponseWriter, r *http.Request) {
 	// Serve metrics
 	promhttp.Handler().ServeHTTP(w, r)
 
-	// Reset gauge values
-	endpointAvgLatency.Reset()
-	endpointMaxLatency.Reset()
-	endpointDuration.Reset()
-	endpointRequests.Reset()
 	endpointErrorRate.Reset()
 	endpointClientErrorRate.Reset()
 	endpointServerErrorRate.Reset()
