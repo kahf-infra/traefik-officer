@@ -408,7 +408,18 @@ func updateTopPaths() {
 			pathKey := fmt.Sprintf("%s:%s", service, paths[i].path)
 			topPathsPerService[service][pathKey] = true
 		}
+		logger.Debugf("Updated top paths. Service: %s, Total top paths: %d \n",
+			service, countTotalTopPaths(topPathsPerService))
 	}
+}
+
+// Helper function to count total top paths across all services
+func countTotalTopPaths(tps map[string]map[string]bool) int {
+	count := 0
+	for _, paths := range tps {
+		count += len(paths)
+	}
+	return count
 }
 
 func startTopPathsUpdater(interval time.Duration) {

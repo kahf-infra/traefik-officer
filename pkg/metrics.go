@@ -6,6 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 // URLPattern represents a URL pattern configuration for a service
@@ -50,24 +51,6 @@ var (
 			Name:    "traefik_officer_request_duration_seconds",
 			Help:    "Duration of HTTP requests in seconds",
 			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"request_method", "response_code", "app"},
-	)
-
-	requestSize = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "traefik_officer_request_size_bytes",
-			Help:    "Size of HTTP requests in bytes",
-			Buckets: prometheus.ExponentialBuckets(100, 10, 8),
-		},
-		[]string{"request_method", "response_code", "app"},
-	)
-
-	responseSize = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "traefik_officer_response_size_bytes",
-			Help:    "Size of HTTP responses in bytes",
-			Buckets: prometheus.ExponentialBuckets(100, 10, 8),
 		},
 		[]string{"request_method", "response_code", "app"},
 	)
@@ -140,10 +123,6 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 	// Original metrics (keeping existing functionality)
 	totalRequests.WithLabelValues(method, code, service).Inc()
 	requestDuration.WithLabelValues(method, code, service).Observe(duration)
-	responseSize.WithLabelValues(method, code, service).Observe(float64(entry.OriginContentSize))
-	if entry.OriginContentSize > 0 {
-		requestSize.WithLabelValues(method, code, service).Observe(float64(entry.OriginContentSize))
-	}
 
 	// New endpoint-specific metrics
 	endpoint := normalizeURL(service, entry.RequestPath, urlPatterns)
@@ -189,4 +168,24 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 		endpointRequests.WithLabelValues(service, endpoint, method, code).Inc()
 		endpointDuration.WithLabelValues(service, endpoint, method, code).Observe(duration)
 	}
+}
+
+func clearAllPathMetrics() {
+	// Clear latency metrics
+	endpointAvgLatency.Reset()
+	endpointMaxLatency.Reset()
+	endpointDuration.Reset()
+	endpointClientErrorRate.Reset()
+	endpointServerErrorRate.Reset()
+	endpointErrorRate.Reset()
+	endpointRequests.Reset()
+}
+
+func startMetricsCleaner(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for range ticker.C {
+			clearAllPathMetrics()
+		}
+	}()
 }

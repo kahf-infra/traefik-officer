@@ -46,12 +46,8 @@ func main() {
 	logger.Info("JSON Logs:", *jsonLogs)
 
 	// Start background task to update top paths
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		for range ticker.C {
-			updateTopPaths()
-		}
-	}()
+	startTopPathsUpdater(30 * time.Second)
+	startMetricsCleaner(60 * time.Minute)
 
 	// Start metrics server
 	go func() {
