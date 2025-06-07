@@ -29,6 +29,10 @@
         {
             "Name": "ad-server-dev",
             "Namespace": "ad-server-dev"
+        },
+        {
+            "Name": "hikmah-api",
+            "Namespace": "hikmah-production"
         }
     ],
     "URLPatterns": [

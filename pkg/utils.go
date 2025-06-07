@@ -373,6 +373,7 @@ func updateTopPaths() {
 	servicePaths := make(map[string][]pathStat)
 
 	// Get all paths and their stats
+	endpointStatsMutex.RLock()
 	for key, stat := range endpointStats {
 		if stat.TotalRequests > 0 {
 			// Split the key into service and path
@@ -390,6 +391,7 @@ func updateTopPaths() {
 			})
 		}
 	}
+	endpointStatsMutex.RUnlock()
 
 	topPathsMutex.Lock()
 	defer topPathsMutex.Unlock()
@@ -436,7 +438,13 @@ func countTotalTopPaths(tps map[string]map[string]bool) int {
 
 func startTopPathsUpdater(interval time.Duration) {
 	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Errorf("Recovered in startTopPathsUpdater: %v", r)
+			}
+		}()
 		for range ticker.C {
 			updateTopPaths()
 		}

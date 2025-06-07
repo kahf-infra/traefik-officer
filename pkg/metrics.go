@@ -6,6 +6,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -20,7 +21,8 @@ type URLPattern struct {
 
 var (
 	// Track metrics for calculating averages and error rates
-	endpointStats = make(map[string]*EndpointStat)
+	endpointStats      = make(map[string]*EndpointStat)
+	endpointStatsMutex sync.RWMutex
 )
 
 type EndpointStat struct {
@@ -129,29 +131,45 @@ func updateMetrics(entry *traefikLogConfig, urlPatterns []URLPattern) {
 	endpoint := normalizeURL(service, entry.RequestPath, urlPatterns)
 
 	key := fmt.Sprintf("%s:%s", service, endpoint)
+	endpointStatsMutex.RLock()
 	if endpointStats[key] == nil {
+		endpointStatsMutex.RUnlock()
+		endpointStatsMutex.Lock()
 		endpointStats[key] = &EndpointStat{}
+		endpointStatsMutex.Unlock()
+	} else {
+		endpointStatsMutex.RUnlock()
 	}
-
+	endpointStatsMutex.RLock()
 	stat := endpointStats[key]
+	endpointStatsMutex.RUnlock()
+
+	endpointStatsMutex.Lock()
 	stat.TotalRequests++
 	stat.TotalDuration += duration
 
 	if duration > stat.MaxDuration {
 		stat.MaxDuration = duration
 	}
+	endpointStatsMutex.Unlock()
 
 	isError := entry.OriginStatus >= 400
 	if isError {
+		endpointStatsMutex.Lock()
 		stat.ErrorCount++
+		endpointStatsMutex.Unlock()
 		errorRate := float64(stat.ErrorCount) / float64(stat.TotalRequests)
 		endpointErrorRate.WithLabelValues(service, endpoint).Set(errorRate)
 		if entry.OriginStatus >= 500 {
+			endpointStatsMutex.Lock()
 			stat.ServerErrorCount++
+			endpointStatsMutex.Unlock()
 			serverErrorRate := float64(stat.ServerErrorCount) / float64(stat.TotalRequests)
 			endpointServerErrorRate.WithLabelValues(service, endpoint).Set(serverErrorRate)
 		} else {
+			endpointStatsMutex.Lock()
 			stat.ClientErrorCount++
+			endpointStatsMutex.Unlock()
 			clientErrorRate := float64(stat.ClientErrorCount) / float64(stat.TotalRequests)
 			endpointClientErrorRate.WithLabelValues(service, endpoint).Set(clientErrorRate)
 		}

@@ -38,7 +38,7 @@ services:
     command:
       - "--watch"
       - "--read-only=false"
-      - "/data/db.json"
+      - "/data/postgres.json"
       - "--routes"
       - "/data/routes.json"
       - "--middlewares"
@@ -46,7 +46,7 @@ services:
       - "--no-cors" # Disable default CORS to use our middleware
     volumes:
       - ./test/middleware.js:/data/middleware.js
-      - ./test/db.json:/data/db.json
+      - ./test/postgres.json:/data/postgres.json
       - ./test/routes.json:/data/routes.json  # For custom routes
     networks:
       - traefik-test
